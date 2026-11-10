@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 45
     env:
       WHAT: ${{ github.event.inputs.what || 'sim' }}
@@ -26,8 +26,10 @@ jobs:
 
       - name: Toolchain
         run: |
+          sudo xcode-select -s /Applications/Xcode_26.3.app
           xcodebuild -version
           xcrun simctl list runtimes
+          xcrun simctl list devices available | grep -E "iPhone 17|Apple TV" || true
 
       - name: Cache frameworks
         uses: actions/cache@v4
