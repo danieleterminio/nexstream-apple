@@ -51,7 +51,7 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         UIBackgroundModes: [audio]
-        UIAppFonts: [manrope_400.ttf, manrope_500.ttf, manrope_600.ttf, manrope_700.ttf, manrope_800.ttf, sora_600.ttf, sora_700.ttf, sora_800.ttf]
+        UIAppFonts: [Manrope.ttf, Sora.ttf]
         UIUserInterfaceStyle: Dark
         ITSAppUsesNonExemptEncryption: false
         NSAppTransportSecurity:
@@ -111,7 +111,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen:
           UIColorName: LaunchBackground
-        UIAppFonts: [manrope_400.ttf, manrope_500.ttf, manrope_600.ttf, manrope_700.ttf, manrope_800.ttf, sora_600.ttf, sora_700.ttf, sora_800.ttf]
+        UIAppFonts: [Manrope.ttf, Sora.ttf]
         UIUserInterfaceStyle: Dark
         UIBackgroundModes: [audio]
         ITSAppUsesNonExemptEncryption: false

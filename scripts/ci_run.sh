@@ -10,7 +10,7 @@ run_one() { # label productdir device-regex
   local LABEL="$1" APP="build/dd/Build/Products/Debug-$2/NexStream.app" MATCH="$3"
   if [ ! -d "$APP" ]; then echo "[$LABEL] no app built, skipping"; return; fi
   local UDID
-  UDID=$(xcrun simctl list devices available | grep -E "$MATCH" | head -1 | grep -oE "[0-9A-F]{8}-[0-9A-F-]{27}")
+  UDID=$(xcrun simctl list devices available -j | python3 scripts/pick_sim.py "$MATCH" "$4")
   if [ -z "$UDID" ]; then echo "[$LABEL] no simulator matching $MATCH"; xcrun simctl list devices available; return; fi
   echo "[$LABEL] simulator $UDID"
   xcrun simctl boot "$UDID" || true
@@ -34,7 +34,7 @@ run_one() { # label productdir device-regex
   xcrun simctl shutdown "$UDID" || true
 }
 
-if [ "$WHAT" = "ios" ] || [ "$WHAT" = "all" ]; then run_one ios iphonesimulator "iPhone 17 Pro \("; fi
-if [ "$WHAT" = "tv" ] || [ "$WHAT" = "all" ]; then run_one tv appletvsimulator "Apple TV 4K"; fi
+if [ "$WHAT" = "ios" ] || [ "$WHAT" = "all" ]; then run_one ios iphonesimulator "iPhone 17 Pro" iOS; fi
+if [ "$WHAT" = "tv" ] || [ "$WHAT" = "all" ]; then run_one tv appletvsimulator "Apple TV 4K (3rd generation)" tvOS; fi
 ls -la "$OUT"
 exit 0

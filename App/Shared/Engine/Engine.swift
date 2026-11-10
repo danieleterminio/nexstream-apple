@@ -81,6 +81,12 @@ final class Engine {
         if !NXPython.isStarted {
             if let err = NXPython.start(withHome: res + "/python", paths: [res + "/PythonApp"]) { throw EngineError(description: "python: \(err)") }
         }
+        let app = res + "/PythonApp"
+        if !FileManager.default.fileExists(atPath: app + "/nxbridge.py") {
+            let listing = (try? FileManager.default.contentsOfDirectory(atPath: res))?.sorted().joined(separator: " ") ?? "?"
+            NxLog.e("NxEngine", "PythonApp missing in the bundle, which has: \(listing)")
+        }
+        _ = NXPython.run("import sys\np = '" + app.replacingOccurrences(of: "'", with: "\\'") + "'\nif p not in sys.path: sys.path.insert(0, p)\n")
         try extractAddonIfNeeded(bundlePath: res)
         var err: NSString?
         guard let r = NXPython.call("nxbridge", function: "init", args: [addonDir.path, dataDir.path], error: &err) else {
