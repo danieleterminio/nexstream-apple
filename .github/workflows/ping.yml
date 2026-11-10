@@ -1,0 +1,14 @@
+name: ping
+on: workflow_dispatch
+jobs:
+  ping:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - run: |
+          uname -a
+          if [ "$(uname)" = "Darwin" ]; then sw_vers; ls /Applications | grep -i xcode; xcodebuild -version; fi
