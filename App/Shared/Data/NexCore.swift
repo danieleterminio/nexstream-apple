@@ -86,6 +86,7 @@ final class NexCore {
         started = true
         Vpn.shared.start()
         Backup.restoreIfNeeded(self)
+        Demo.prepare(self)
         Crests.load(db)
         reminders.rescheduleAll()
         Task { await teams.scheduleAlerts() }

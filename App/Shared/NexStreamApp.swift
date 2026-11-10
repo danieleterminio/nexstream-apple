@@ -1,64 +1,139 @@
 import SwiftUI
 import UIKit
-#if os(tvOS)
-import TVVLCKit
-#else
-import MobileVLCKit
-#endif
 
 @main
 struct NexStreamApp: App {
+    #if os(iOS)
+    @UIApplicationDelegateAdaptor(NxAppDelegate.self) private var appDelegate
+    #endif
+    @StateObject private var app = AppModel()
+    @Environment(\.scenePhase) private var phase
+
     var body: some Scene {
-        WindowGroup { SpikeView().preferredColorScheme(.dark) }
+        WindowGroup {
+            RootView()
+                .environmentObject(app)
+                .environmentObject(app.store)
+                .preferredColorScheme(.dark)
+                .tint(NxColor.accent)
+                .onOpenURL { app.core.handle(url: $0) }
+                .onChange(of: phase) { _, p in
+                    if p == .active { Vpn.shared.refresh(); app.core.checkAlerts(); PlatformServices.shared.appBecameActive() }
+                }
+        }
     }
 }
 
-/// Build spike: proves the three risky pieces work on this platform — embedded Python running Stream4Me, VLCKit, Liquid Glass.
-struct SpikeView: View {
-    @State private var lines: [String] = ["Avvio…"]
+/// The gates, in order: VPN → line → profile → app. Each one is a plain `if`, so when the VPN drops the whole app (player
+/// included) leaves the screen at once, and when the profile changes every page starts over.
+struct RootView: View {
+    @EnvironmentObject var app: AppModel
+    @State private var intro = true
 
     var body: some View {
         ZStack {
-            LinearGradient(colors: [Color(red: 0.90, green: 0.09, blue: 0.25), Color(red: 0.05, green: 0.05, blue: 0.07)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                .ignoresSafeArea()
-            VStack(spacing: 14) {
-                Image("BrandLockup")
-                ForEach(lines, id: \.self) { l in
-                    Text(l).font(.custom("Manrope", size: 15)).multilineTextAlignment(.center)
-                }
-                Button("Liquid Glass") {}.buttonStyle(.glass)
-                Text("Vetro").padding(.horizontal, 24).padding(.vertical, 12).glassEffect()
-            }
-            .padding(24)
+            NxColor.bg.ignoresSafeArea()
+            content
+            if let t = app.toast { ToastView(text: t) }
+            if intro { BrandIntro { withAnimation(.easeOut(duration: 0.35)) { intro = false } } }
         }
-        .task { await run() }
+        .animation(.easeInOut(duration: 0.25), value: app.toast)
     }
 
-    private func run() async {
-        var out = [String]()
-        out.append("VLCKit \(VLCLibrary.shared().version)")
-        let families = UIFont.familyNames.filter { $0.hasPrefix("Manrope") || $0.hasPrefix("Sora") }
-        out.append("font: " + families.flatMap { UIFont.fontNames(forFamilyName: $0) }.joined(separator: ", "))
-        do {
-            try await Engine.shared.ensureReady()
-            out.append("init: \(Engine.shared.initInfo)")
-            out.append("Stream4Me \(await Engine.shared.version())")
-            let ch = try await Engine.shared.channels()
-            out.append("canali: \(ch.count)")
-            let r = try await Engine.shared.search("Breaking Bad", type: "tvshow", year: 2008)
-            out.append("ricerca: \(r.hits.count) risultati in \(r.elapsed ?? 0) s; primo: \(r.hits.first.map { "\($0.channel) · \($0.title)" } ?? "-")")
-            if let first = r.hits.first {
-                let eps = try await Engine.shared.episodes(first.item)
-                out.append("episodi: \(eps.count)")
-                if let e = eps.first {
-                    let p = try await Engine.shared.play(e.item)
-                    out.append("play: \(p.kind ?? "?") \(p.server ?? "?") \(p.url ?? "nessun url")")
+    @ViewBuilder private var content: some View {
+        if !app.vpn {
+            #if os(iOS)
+            if app.offlineDownloads { OfflineDownloadsGate() } else { VpnGateView() }
+            #else
+            VpnGateView()
+            #endif
+        } else if app.session == nil {
+            LoginView()
+        } else if let p = app.profile {
+            MainView(profile: p)
+                .id(p.id)
+                .fullScreenCover(item: $app.playing) { playing in
+                    PlayerHost(playing: playing).environmentObject(app).environmentObject(app.store)
                 }
-            }
-        } catch {
-            out.append("ERRORE: \(error)")
+                .fullScreenCover(item: onboardingBinding) { o in
+                    OnboardingView(profileId: o.id) { app.onboardingFor = nil }.environmentObject(app).environmentObject(app.store)
+                }
+                .overlay(alignment: .bottomTrailing) { if let r = app.reminder { ReminderBanner(reminder: r) } }
+        } else if app.manageProfilesGate {
+            ProfilesView(manage: true) { app.manageProfilesGate = false; app.core.profiles.refresh() }
+        } else {
+            ProfilesView()
         }
-        lines = out
-        out.forEach { NxLog.i("Spike", $0) }
+    }
+
+    private struct OnboardingTarget: Identifiable { let id: Int64 }
+    private var onboardingBinding: Binding<OnboardingTarget?> {
+        Binding(get: { app.onboardingFor.map { OnboardingTarget(id: $0) } }, set: { if $0 == nil { app.onboardingFor = nil } })
+    }
+}
+
+/// Opening animation: the mark breathes once on the page colour ("Respiro"), then the app shows.
+struct BrandIntro: View {
+    let onDone: () -> Void
+    @State private var scale = 0.86
+    @State private var glow = 0.0
+    var body: some View {
+        ZStack {
+            NxColor.bg.ignoresSafeArea()
+            Circle().fill(NxColor.accent.opacity(0.35)).frame(width: Metrics.u(220), height: Metrics.u(220)).blur(radius: Metrics.u(60)).opacity(glow)
+            Image("BrandSymbol").resizable().scaledToFit().frame(width: Metrics.u(110), height: Metrics.u(110)).scaleEffect(scale)
+        }
+        .task {
+            withAnimation(.easeInOut(duration: 0.7)) { scale = 1.04; glow = 1 }
+            try? await Task.sleep(nanoseconds: 750_000_000)
+            withAnimation(.easeInOut(duration: 0.4)) { scale = 1.0; glow = 0.5 }
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            onDone()
+        }
+    }
+}
+
+struct ToastView: View {
+    let text: String
+    var body: some View {
+        VStack {
+            Spacer()
+            Text(text).font(NxFont.meta).foregroundStyle(NxColor.text).multilineTextAlignment(.center)
+                .padding(.horizontal, Metrics.u(18)).padding(.vertical, Metrics.u(12))
+                .nxGlass(Capsule())
+                .padding(.bottom, Metrics.u(Metrics.tv ? 40 : 96))
+        }
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .allowsHitTesting(false)
+    }
+}
+
+/// "Sta per iniziare": shown on top of whatever is on screen when a reminder (or a followed team's match) is due.
+struct ReminderBanner: View {
+    let reminder: ReminderEntity
+    @EnvironmentObject var app: AppModel
+
+    var body: some View {
+        let mins = max(0, (reminder.at - Clock.now + 30_000) / Clock.minute)
+        VStack(alignment: .leading, spacing: Metrics.u(8)) {
+            HStack(spacing: Metrics.u(8)) {
+                NxTag(text: mins == 0 ? "Inizia ora" : (mins == 1 ? "Tra 1 minuto" : "Tra \(mins) minuti"), color: NxColor.accent)
+                Text(reminder.createdAt == 0 ? "La tua squadra" : "Promemoria").font(NxFont.label).foregroundStyle(NxColor.textDim)
+            }
+            Text(reminder.title).font(NxFont.titleM).foregroundStyle(NxColor.text).lineLimit(2)
+            if let s = reminder.sub { Text(s).font(NxFont.meta).foregroundStyle(NxColor.textMuted).lineLimit(1) }
+            HStack(spacing: Metrics.u(10)) {
+                NxButton("Guarda", icon: "play.fill", kind: .primary) {
+                    app.core.reminderAlert.value = nil
+                    if let c = app.core.channels.get(reminder.streamId) { app.play(c) }
+                }
+                NxButton("Ignora", kind: .quiet) { app.core.reminderAlert.value = nil }
+            }
+        }
+        .padding(Metrics.u(18))
+        .frame(maxWidth: Metrics.u(380), alignment: .leading)
+        .nxGlassPanel()
+        .padding(Metrics.u(18))
+        .transition(.move(edge: .trailing).combined(with: .opacity))
     }
 }
