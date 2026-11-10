@@ -35,7 +35,7 @@ struct DownloadsView: View {
             }
         }
         .nxPage()
-        .navigationTitle("Download")
+        .nxTitle("Download")
     }
 
     private func row(_ d: DownloadEntity) -> some View {

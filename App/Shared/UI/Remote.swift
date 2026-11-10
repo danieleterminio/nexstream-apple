@@ -101,7 +101,7 @@ struct RemoteView: View {
             if let t = tv { pad(t) } else if let a = pairingAddress { pairing(a) } else { picker }
         }
         .nxPage()
-        .navigationTitle(tv?.name ?? "Telecomando")
+        .nxTitle(tv?.name ?? "Telecomando")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .onAppear {
@@ -269,7 +269,7 @@ struct RemoteView: View {
 struct RemoteView: View {
     var body: some View {
         StateMessage(icon: "appletvremote.gen4", title: "Telecomando dal telefono", text: "Apri NexStream sul telefono, poi Impostazioni e “Telecomando della TV”: questa Apple TV compare da sola. La prima volta mostro qui un codice.")
-            .nxPage().navigationTitle("Telecomando")
+            .nxPage().nxTitle("Telecomando")
     }
 }
 

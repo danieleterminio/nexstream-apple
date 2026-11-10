@@ -103,6 +103,14 @@ extension View {
     func nxGlassPanel(radius: CGFloat = Metrics.radius + 6) -> some View {
         glassEffect(Glass.regular, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
     }
+    /// Page title: in the navigation bar on iPhone; the Apple TV already names the section in its sidebar.
+    @ViewBuilder func nxTitle(_ title: String) -> some View {
+        #if os(iOS)
+        navigationTitle(title)
+        #else
+        self
+        #endif
+    }
     /// The page colour behind a screen.
     func nxPage() -> some View { background(NxColor.bg.ignoresSafeArea()) }
     /// Hides the system list / form background so the page colour shows (lists are already clear on Apple TV).
@@ -169,8 +177,12 @@ struct NxIconButton: View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: size * 0.42 * Metrics.unit, weight: .semibold))
+                #if os(iOS)
                 .foregroundStyle(active ? NxColor.accent : NxColor.text)
                 .frame(width: Metrics.u(size), height: Metrics.u(size))
+                #else
+                .frame(width: Metrics.u(size) * 0.62, height: Metrics.u(size) * 0.62)
+                #endif
         }
         #if os(tvOS)
         .buttonStyle(.glass)
@@ -233,8 +245,10 @@ struct NxChip: View {
                 if let i = icon { Image(systemName: i).font(.system(size: 12 * Metrics.type, weight: .semibold)) }
                 Text(title).font(NxFont.ui(13, selected ? .bold : .medium)).lineLimit(1)
             }
+            #if os(iOS)
             .foregroundStyle(selected ? Color.white : NxColor.textMuted)
             .padding(.horizontal, Metrics.u(14)).padding(.vertical, Metrics.u(8))
+            #endif
         }
         #if os(tvOS)
         .buttonStyle(.glass)

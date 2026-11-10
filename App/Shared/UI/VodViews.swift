@@ -207,7 +207,7 @@ struct GenreView: View {
             } else { BrandLoader(label: name).frame(maxWidth: .infinity, maxHeight: .infinity) }
         }
         .nxPage()
-        .navigationTitle((media == "tv" ? "Serie TV · " : "Film · ") + name)
+        .nxTitle((media == "tv" ? "Serie TV · " : "Film · ") + name)
         .task { if rows == nil { rows = await app.core.catalog.genreRows(media, genreId, name, app.kids) } }
     }
 }

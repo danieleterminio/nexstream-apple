@@ -277,7 +277,7 @@ struct TransferView: View {
             .frame(maxWidth: .infinity)
         }
         .nxPage()
-        .navigationTitle("Profili tra dispositivi")
+        .nxTitle("Profili tra dispositivi")
         .onAppear { openLink(); finder.start(type: LanLink.service) { devices = $0.filter { $0.name != Lan.deviceName() || true } } }
         .onDisappear { link?.close(); finder.stop() }
     }

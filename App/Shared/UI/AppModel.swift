@@ -43,6 +43,7 @@ enum Route: Hashable {
     case remote
     case downloads
     case settings
+    case mine
 }
 
 /// What is playing full screen.

@@ -39,7 +39,7 @@ struct SearchView: View {
             .padding(.top, Metrics.u(10))
         }
         .nxPage()
-        .navigationTitle("Cerca")
+        .nxTitle("Cerca")
         .searchable(text: $query, prompt: "Canali, programmi, film e serie")
         .autocorrectionDisabled()
         .task(id: query) { await run(query.trimmed) }
@@ -179,7 +179,7 @@ struct SettingsView: View {
         }
         .nxClearList()
         .nxPage()
-        .navigationTitle("Impostazioni")
+        .nxTitle("Impostazioni")
         .id(rev)
         .onAppear {
             teams = core.teams.followed()
@@ -275,7 +275,7 @@ struct TeamsView: View {
             .padding(.top, Metrics.u(8))
         }
         .nxPage()
-        .navigationTitle("Le tue squadre")
+        .nxTitle("Le tue squadre")
         .searchable(text: $query, prompt: "Cerca una squadra")
         .task { await reload() }
     }

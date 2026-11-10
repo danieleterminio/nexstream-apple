@@ -25,7 +25,6 @@ struct MainView: View {
             Tab(AppSection.live.label, systemImage: AppSection.live.icon, value: AppSection.live) { stack(.live) { LiveView() } }
             Tab(AppSection.guide.label, systemImage: AppSection.guide.icon, value: AppSection.guide) { stack(.guide) { GuideView() } }
             Tab("Film e serie", systemImage: AppSection.movies.icon, value: AppSection.movies) { stack(.movies) { VodTabView(pid: profile.id, kids: profile.kids) } }
-            Tab(AppSection.mine.label, systemImage: AppSection.mine.icon, value: AppSection.mine) { stack(.mine) { MineView(pid: profile.id, kids: profile.kids) } }
             Tab(value: AppSection.search, role: .search) { stack(.search) { SearchView() } }
         }
         .tabBarMinimizeBehavior(.onScrollDown)
@@ -49,6 +48,9 @@ struct MainView: View {
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         Image("BrandSymbol").resizable().scaledToFit().frame(width: 26, height: 26).accessibilityLabel("NexStream")
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { app.open(.mine) } label: { Image(systemName: "bookmark.fill") }.accessibilityLabel("I miei")
                     }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button { app.open(.settings) } label: { profile.face(30) }.accessibilityLabel("Impostazioni e profilo")
@@ -76,6 +78,7 @@ struct RouteView: View {
         case .remote: RemoteView()
         case .downloads: DownloadsView()
         case .settings: SettingsView()
+        case .mine: if let p = app.profile { MineView(pid: p.id, kids: p.kids).nxTitle("I miei") }
         }
     }
 }
@@ -147,7 +150,7 @@ struct LiveView: View {
             }
         }
         .nxPage()
-        .navigationTitle("Canali")
+        .nxTitle("Canali")
     }
 }
 
@@ -217,7 +220,7 @@ struct GuideView: View {
             .padding(.top, Metrics.u(8))
         }
         .nxPage()
-        .navigationTitle("Guida TV")
+        .nxTitle("Guida TV")
         .task(id: "\(genre)-\(day)-\(slot)-\(store.channels.count)") { await load() }
     }
 
@@ -271,7 +274,7 @@ struct GuideRow: View {
     @EnvironmentObject var store: LiveStore
 
     #if os(tvOS)
-    private let cellW: CGFloat = 400, cellH: CGFloat = 132, headW: CGFloat = 230
+    private let cellW: CGFloat = 400, cellH: CGFloat = 158, headW: CGFloat = 230
     #else
     private let cellW: CGFloat = 196, cellH: CGFloat = 74, headW: CGFloat = 78
     #endif

@@ -12,6 +12,8 @@ final class HomeModel: ObservableObject {
     private var building = false
     private var again = false
     private var started = false
+    /// The page is shown once the carousel's on-demand slides are known: rows first and the hero later would push the page down.
+    private var heroesReady = false
     private var watches = [Watch]()
 
     init(pid: Int64, kids: Bool) { self.pid = pid; self.kids = kids }
@@ -22,6 +24,7 @@ final class HomeModel: ObservableObject {
         core.prefetchMeta()
         Task { await core.meta.refreshTrending() }
         Task { await loadVod(store) }
+        Task { try? await Task.sleep(nanoseconds: 7_000_000_000); if !self.heroesReady { self.heroesReady = true; self.rebuild(store) } }
         watches.append(core.db.changes.observe { [weak self] t in
             if t == "progress" { DispatchQueue.main.async { Task { await self?.refreshContinue(store) } } }
         })
@@ -53,6 +56,7 @@ final class HomeModel: ObservableObject {
         var heroes = [HeroItem]()
         for t in await core.catalog.heroCandidates(kids).prefix(4) { heroes.append(.vod(t, try? await core.catalog.details(t.media, t.tmdbId))) }
         vod.heroes = heroes
+        heroesReady = true
         rebuild(store)
         let pub = await core.catalog.publicRows(kids)
         func pick(_ id: String, _ title: String) -> HomeRow? {
@@ -73,6 +77,7 @@ final class HomeModel: ObservableObject {
 
     /// Rebuilds the rows from the live snapshot (called whenever the store reloads).
     func rebuild(_ store: LiveStore) {
+        if !heroesReady { return }
         if building { again = true; return }
         building = true
         let core = self.core, vod = self.vod
