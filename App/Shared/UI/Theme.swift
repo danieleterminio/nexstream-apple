@@ -30,6 +30,14 @@ enum NxColor {
     static let hairline = Color.white.opacity(0.12)
     static let glass = Color.white.opacity(0.08)
     static let track = Color.white.opacity(0.28)
+    /// Text on rows that the Apple TV focus turns white: there the system picks the colour.
+    #if os(tvOS)
+    static let rowText = Color.primary
+    static let rowSub = Color.secondary
+    #else
+    static let rowText = text
+    static let rowSub = textDim
+    #endif
     static let brand = LinearGradient(colors: [accent, accentBright, ember], startPoint: .topLeading, endPoint: .bottomTrailing)
     /// Left-to-right scrim that keeps the hero text readable over any artwork.
     static let heroScrim = LinearGradient(stops: [.init(color: ink1, location: 0), .init(color: ink1.opacity(0.94), location: 0.28), .init(color: ink1.opacity(0.62), location: 0.48), .init(color: ink1.opacity(0.12), location: 0.70), .init(color: .clear, location: 1)], startPoint: .leading, endPoint: .trailing)
@@ -145,6 +153,9 @@ struct NxButton: View {
             if let i = icon { Image(systemName: i).font(.system(size: 15 * Metrics.type, weight: .bold)) }
             Text(title).font(NxFont.button).lineLimit(1)
         }
+        #if os(tvOS)
+        .fixedSize()
+        #endif
         .frame(maxWidth: wide ? .infinity : nil)
         #if os(iOS)
         .padding(.horizontal, 6).padding(.vertical, 5)

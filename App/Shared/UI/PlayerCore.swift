@@ -226,8 +226,8 @@ struct OptionRow: View {
         Button(action: action) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(NxFont.bodyStrong).foregroundStyle(NxColor.text)
-                    if let s = sub { Text(s).font(NxFont.caption).foregroundStyle(NxColor.textDim) }
+                    Text(title).font(NxFont.bodyStrong).foregroundStyle(NxColor.rowText)
+                    if let s = sub { Text(s).font(NxFont.caption).foregroundStyle(NxColor.rowSub) }
                 }
                 Spacer()
                 if selected { Image(systemName: "checkmark").font(.system(size: 15 * Metrics.unit, weight: .bold)).foregroundStyle(NxColor.accent) }

@@ -214,10 +214,10 @@ struct SettingsView: View {
 
     private func label(_ title: String, _ sub: String?, _ icon: String) -> some View {
         HStack(spacing: Metrics.u(12)) {
-            Image(systemName: icon).font(.system(size: 17 * Metrics.unit, weight: .medium)).foregroundStyle(NxColor.textMuted).frame(width: Metrics.u(28))
+            Image(systemName: icon).font(.system(size: 17 * Metrics.unit, weight: .medium)).foregroundStyle(NxColor.rowSub).frame(width: Metrics.u(28))
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(NxFont.bodyStrong).foregroundStyle(NxColor.text)
-                if let s = sub { Text(s).font(NxFont.caption).foregroundStyle(NxColor.textDim).lineLimit(3) }
+                Text(title).font(NxFont.bodyStrong).foregroundStyle(NxColor.rowText)
+                if let s = sub { Text(s).font(NxFont.caption).foregroundStyle(NxColor.rowSub).lineLimit(3) }
             }
         }
     }

@@ -15,7 +15,9 @@ struct NexStreamApp: App {
                 .environmentObject(app)
                 .environmentObject(app.store)
                 .preferredColorScheme(.dark)
+                #if os(iOS)
                 .tint(NxColor.accent)
+                #endif
                 .onOpenURL { app.core.handle(url: $0) }
                 .onChange(of: phase) { _, p in
                     if p == .active { Vpn.shared.refresh(); app.core.checkAlerts(); PlatformServices.shared.appBecameActive() }
