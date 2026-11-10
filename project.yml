@@ -1,0 +1,158 @@
+name: NexStream
+options:
+  deploymentTarget:
+    iOS: "26.0"
+    tvOS: "26.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    DEVELOPMENT_TEAM: ""
+    SWIFT_OBJC_BRIDGING_HEADER: App/Bridge/NexStream-Bridging-Header.h
+    CLANG_ENABLE_MODULES: "YES"
+    GCC_WARN_INHIBIT_ALL_WARNINGS: "NO"
+    SWIFT_EMIT_LOC_STRINGS: "NO"
+    ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+targets:
+  NexStream:
+    type: application
+    platform: iOS
+    sources:
+      - path: App/Shared
+      - path: App/iOS
+      - path: App/Bridge
+      - path: PythonApp
+        type: folder
+        buildPhase: resources
+      - path: Resources/s4me
+        type: folder
+        buildPhase: resources
+      - path: Resources/s4me_data
+        type: folder
+        buildPhase: resources
+      - path: Resources/Fonts
+        buildPhase: resources
+    info:
+      path: build/gen/iOS-Info.plist
+      properties:
+        CFBundleDisplayName: NexStream
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UIBackgroundModes: [audio]
+        UIAppFonts: [manrope_400.ttf, manrope_500.ttf, manrope_600.ttf, manrope_700.ttf, manrope_800.ttf, sora_600.ttf, sora_700.ttf, sora_800.ttf]
+        UIUserInterfaceStyle: Dark
+        ITSAppUsesNonExemptEncryption: false
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        NSLocalNetworkUsageDescription: NexStream usa la rete di casa per fare da telecomando alla TV e per passare linea e profili tra i tuoi dispositivi.
+        NSBonjourServices: [_nexremote._tcp, _nexstream._tcp]
+        NSCameraUsageDescription: La fotocamera serve a leggere il codice QR mostrato dalla TV.
+        CFBundleURLTypes:
+          - CFBundleURLName: app.nexstream.one
+            CFBundleURLSchemes: [nexstream]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.nexstream.one
+        PRODUCT_NAME: NexStream
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: "NO"
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: "NO"
+    dependencies:
+      - framework: Frameworks/iOS/Python.xcframework
+        embed: true
+      - framework: Frameworks/iOS/MobileVLCKit.xcframework
+        embed: true
+      - sdk: libsqlite3.tbd
+      - sdk: libz.tbd
+      - sdk: libc++.tbd
+      - sdk: libiconv.tbd
+      - sdk: libbz2.tbd
+    postBuildScripts:
+      - name: Install Python
+        script: |
+          "$PROJECT_DIR/scripts/install_python.sh" iOS
+        basedOnDependencyAnalysis: false
+  NexStreamTV:
+    type: application
+    platform: tvOS
+    sources:
+      - path: App/Shared
+      - path: App/tvOS
+      - path: App/Bridge
+      - path: PythonApp
+        type: folder
+        buildPhase: resources
+      - path: Resources/s4me
+        type: folder
+        buildPhase: resources
+      - path: Resources/s4me_data
+        type: folder
+        buildPhase: resources
+      - path: Resources/Fonts
+        buildPhase: resources
+    info:
+      path: build/gen/tvOS-Info.plist
+      properties:
+        CFBundleDisplayName: NexStream
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UIAppFonts: [manrope_400.ttf, manrope_500.ttf, manrope_600.ttf, manrope_700.ttf, manrope_800.ttf, sora_600.ttf, sora_700.ttf, sora_800.ttf]
+        UIUserInterfaceStyle: Dark
+        UIBackgroundModes: [audio]
+        ITSAppUsesNonExemptEncryption: false
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        NSLocalNetworkUsageDescription: NexStream usa la rete di casa per ricevere i comandi dal telefono e per passare linea e profili tra i tuoi dispositivi.
+        NSBonjourServices: [_nexremote._tcp, _nexstream._tcp]
+        CFBundleURLTypes:
+          - CFBundleURLName: app.nexstream.one
+            CFBundleURLSchemes: [nexstream]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.nexstream.one
+        PRODUCT_NAME: NexStream
+        TARGETED_DEVICE_FAMILY: "3"
+        ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon & Top Shelf Image"
+    dependencies:
+      - framework: Frameworks/tvOS/Python.xcframework
+        embed: true
+      - framework: Frameworks/tvOS/TVVLCKit.xcframework
+        embed: true
+      - sdk: libsqlite3.tbd
+      - sdk: libz.tbd
+      - sdk: libc++.tbd
+      - sdk: libiconv.tbd
+      - sdk: libbz2.tbd
+    postBuildScripts:
+      - name: Install Python
+        script: |
+          "$PROJECT_DIR/scripts/install_python.sh" tvOS
+        basedOnDependencyAnalysis: false
+schemes:
+  NexStream:
+    build:
+      targets:
+        NexStream: all
+    run:
+      config: Debug
+  NexStreamTV:
+    build:
+      targets:
+        NexStreamTV: all
+    run:
+      config: Debug

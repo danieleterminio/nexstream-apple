@@ -1,0 +1,8 @@
+Frameworks/
+build/
+*.xcodeproj
+App/Shared/Core/Secrets.swift
+.DS_Store
+DerivedData/
+__pycache__/
+*.pyc
