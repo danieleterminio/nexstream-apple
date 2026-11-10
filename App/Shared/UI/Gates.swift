@@ -59,6 +59,7 @@ struct LoginView: View {
     @State private var busy = false
     @State private var error: String? = nil
     @State private var showPassword = false
+    @State private var phone = false
     @FocusState private var focus: Field?
     private enum Field { case user, pass, go }
 
@@ -95,12 +96,20 @@ struct LoginView: View {
                     .disabled(busy || username.trimmed.isEmpty || password.isEmpty)
                     .focused($focus, equals: .go)
                     .padding(.top, Metrics.u(4))
+                #if os(tvOS)
+                NxButton("Accedi dal telefono", icon: "qrcode", wide: true) { phone = true }
+                #endif
             }
             .padding(Metrics.u(26))
             .frame(maxWidth: Metrics.u(460))
             .nxGlassPanel()
             .padding(Metrics.u(18))
         }
+        #if os(tvOS)
+        .fullScreenCover(isPresented: $phone) {
+            ZStack { GateBackground(); PhoneLoginPanel { phone = false } }.environmentObject(app)
+        }
+        #endif
         .onAppear {
             if let u = ProcessInfo.processInfo.environment["NX_USER"], let p = ProcessInfo.processInfo.environment["NX_PASS"] { username = u; password = p; submit() }
         }

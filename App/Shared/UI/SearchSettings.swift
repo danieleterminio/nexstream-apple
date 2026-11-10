@@ -177,7 +177,7 @@ struct SettingsView: View {
                 Text("NexStream \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")").font(NxFont.caption).foregroundStyle(NxColor.textDim).frame(maxWidth: .infinity).padding(.top, 10)
             }
         }
-        .scrollContentBackground(.hidden)
+        .nxClearList()
         .nxPage()
         .navigationTitle("Impostazioni")
         .id(rev)

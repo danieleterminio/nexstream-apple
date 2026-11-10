@@ -103,8 +103,16 @@ extension View {
     func nxGlassPanel(radius: CGFloat = Metrics.radius + 6) -> some View {
         glassEffect(Glass.regular, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
     }
-    /// Hides the system list / form background so the page colour shows.
+    /// The page colour behind a screen.
     func nxPage() -> some View { background(NxColor.bg.ignoresSafeArea()) }
+    /// Hides the system list / form background so the page colour shows (lists are already clear on Apple TV).
+    @ViewBuilder func nxClearList() -> some View {
+        #if os(iOS)
+        scrollContentBackground(.hidden)
+        #else
+        self
+        #endif
+    }
     @ViewBuilder func `if`<T: View>(_ condition: Bool, _ transform: (Self) -> T) -> some View {
         if condition { transform(self) } else { self }
     }

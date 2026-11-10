@@ -272,7 +272,7 @@ struct VodPlayerView: View {
         }
         .onPlayPauseCommand { model.togglePlay() }
         .onTapGesture { if model.seekTarget != nil { model.applySeek() } else { model.togglePlay() } }
-        .onExitCommand { if model.controls && model.phase == .playing && model.player.isPlaying { model.controls = false } else { app.playing = nil } }
+        .onExitCommand { if model.controls && model.phase == .playing && model.player.isPlaying { model.controls = false } else { app.closePlayer() } }
         .onAppear { focused = true }
         .onChange(of: showOptions) { _, v in if !v { focused = true } }
         .onChange(of: showEpisodes) { _, v in if !v { focused = true } }
@@ -284,6 +284,16 @@ struct VodPlayerView: View {
         #endif
         .onAppear { model.start() }
         .onDisappear { model.close() }
+        .onReceive(NotificationCenter.default.publisher(for: .nxRemoteKey)) { n in
+            switch n.object as? String {
+            case "playpause", "ok": model.togglePlay()
+            case "left": model.seekBy(-10_000)
+            case "right": model.seekBy(10_000)
+            case "back": app.closePlayer()
+            case "menu", "up": showOptions = true
+            default: break
+            }
+        }
         .sheet(isPresented: $showOptions) { options }
         .sheet(isPresented: $showEpisodes) { episodeList }
     }
@@ -298,7 +308,7 @@ struct VodPlayerView: View {
                 Text(model.details.displayTitle).font(NxFont.titleL).foregroundStyle(NxColor.text).multilineTextAlignment(.center)
                 if !model.subtitle.isEmpty { Text(model.subtitle).font(NxFont.meta).foregroundStyle(NxColor.textMuted) }
                 Text(status).font(NxFont.meta).foregroundStyle(NxColor.textDim)
-                NxButton("Annulla", kind: .quiet) { app.playing = nil }.padding(.top, Metrics.u(8))
+                NxButton("Annulla", kind: .quiet) { app.closePlayer() }.padding(.top, Metrics.u(8))
             }
             .padding(Metrics.u(24))
         }
@@ -311,7 +321,7 @@ struct VodPlayerView: View {
             Text(message).font(NxFont.body).foregroundStyle(NxColor.textMuted).multilineTextAlignment(.center)
             HStack(spacing: Metrics.u(10)) {
                 NxButton("Riprova", icon: "arrow.clockwise", kind: .primary) { model.start(retry: true) }
-                NxButton("Chiudi", kind: .quiet) { app.playing = nil }
+                NxButton("Chiudi", kind: .quiet) { app.closePlayer() }
             }
         }
         .padding(Metrics.u(26)).frame(maxWidth: Metrics.u(460)).nxGlassPanel()
@@ -344,7 +354,7 @@ struct VodPlayerView: View {
         VStack(spacing: 0) {
             HStack(spacing: Metrics.u(10)) {
                 #if os(iOS)
-                NxIconButton(icon: "chevron.down", label: "Chiudi") { app.playing = nil }
+                NxIconButton(icon: "chevron.down", label: "Chiudi") { app.closePlayer() }
                 #endif
                 VStack(alignment: .leading, spacing: 2) {
                     Text(model.details.displayTitle).font(NxFont.titleM).foregroundStyle(NxColor.text).lineLimit(1)
@@ -400,12 +410,12 @@ struct VodPlayerView: View {
                 if autoplay { Text("Parte tra \(countdown) secondi").font(NxFont.meta).foregroundStyle(NxColor.textMuted) }
                 HStack(spacing: Metrics.u(10)) {
                     NxButton("Guarda ora", icon: "play.fill", kind: .primary) { var x = n; x.auto = false; app.core.watchSession.touch(); go(x) }
-                    NxButton("Chiudi", kind: .quiet) { app.playing = nil }
+                    NxButton("Chiudi", kind: .quiet) { app.closePlayer() }
                 }
             } else {
                 Text(model.details.displayTitle).font(NxFont.titleL).foregroundStyle(NxColor.text)
                 Text("Fine").font(NxFont.meta).foregroundStyle(NxColor.textMuted)
-                NxButton("Chiudi", kind: .primary) { app.playing = nil }
+                NxButton("Chiudi", kind: .primary) { app.closePlayer() }
             }
         }
         .padding(Metrics.u(26)).frame(maxWidth: Metrics.u(480)).nxGlassPanel()
@@ -430,9 +440,9 @@ struct VodPlayerView: View {
             HStack(spacing: Metrics.u(10)) {
                 NxButton("Continua a guardare", icon: "play.fill", kind: .primary) {
                     app.core.watchSession.touch()
-                    if let n = model.nextRequest(auto: false) { go(n) } else { app.playing = nil }
+                    if let n = model.nextRequest(auto: false) { go(n) } else { app.closePlayer() }
                 }
-                NxButton("Esci", kind: .quiet) { app.playing = nil }
+                NxButton("Esci", kind: .quiet) { app.closePlayer() }
             }
         }
         .padding(Metrics.u(28)).frame(maxWidth: Metrics.u(520)).nxGlassPanel()
@@ -464,7 +474,7 @@ struct VodPlayerView: View {
             }
             #if os(tvOS)
             if model.details.isTv { SwiftUI.Section { OptionRow(title: "Episodi", selected: false) { showOptions = false; showEpisodes = true } } }
-            SwiftUI.Section { OptionRow(title: "Esci dal video", selected: false) { showOptions = false; app.playing = nil } }
+            SwiftUI.Section { OptionRow(title: "Esci dal video", selected: false) { showOptions = false; app.closePlayer() } }
             #endif
         }
     }

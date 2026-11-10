@@ -29,6 +29,8 @@ final class NexCore {
     let resolver: PlaybackResolver
     /// Live <-> VOD bridge: recognised programmes <-> Stream4Me titles.
     let matcher: LiveVodMatcher
+    /// Offline downloads (iPhone).
+    lazy var downloads: Downloads = Downloads(core: self)
 
     /// "Aggiorno i canali…" style status for the UI, nil when idle.
     let syncStatus = Observable<String?>(nil)

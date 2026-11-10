@@ -249,7 +249,7 @@ struct LivePlayerView: View {
         .onPlayPauseCommand { model.togglePause() }
         .onTapGesture { if model.info { model.info = false } else { model.poke() } }
         .onLongPressGesture(minimumDuration: 0.6) { showOptions = true }
-        .onExitCommand { if model.info && model.error == nil { model.info = false } else { app.playing = nil } }
+        .onExitCommand { if model.info && model.error == nil { model.info = false } else { app.closePlayer() } }
         .onAppear { focused = true }
         .onChange(of: showOptions) { _, v in if !v { focused = true } }
         .onChange(of: showList) { _, v in if !v { focused = true } }
@@ -263,6 +263,18 @@ struct LivePlayerView: View {
         #endif
         .onAppear { model.start() }
         .onDisappear { model.stop() }
+        .onReceive(NotificationCenter.default.publisher(for: .nxRemoteKey)) { n in
+            switch n.object as? String {
+            case "playpause": model.togglePause()
+            case "chup", "up": model.zap(1)
+            case "chdown", "down": model.zap(-1)
+            case "ok": model.poke()
+            case "back": app.closePlayer()
+            case "menu", "right": showOptions = true
+            case "left": showList = true
+            default: break
+            }
+        }
         .sheet(isPresented: $showOptions) { options }
         .sheet(isPresented: $showList) { channelList }
     }
@@ -273,7 +285,7 @@ struct LivePlayerView: View {
         VStack(spacing: 0) {
             #if os(iOS)
             HStack(spacing: 10) {
-                NxIconButton(icon: "chevron.down", label: "Chiudi") { app.playing = nil }
+                NxIconButton(icon: "chevron.down", label: "Chiudi") { app.closePlayer() }
                 Spacer()
                 NxIconButton(icon: "list.bullet", label: "Canali") { showList = true }
                 NxIconButton(icon: "slider.horizontal.3", label: "Opzioni") { showOptions = true }
@@ -328,7 +340,7 @@ struct LivePlayerView: View {
             HStack(spacing: 8) { ProgressView(); Text("Continuo a riprovare…").font(NxFont.caption).foregroundStyle(NxColor.textDim) }
             HStack(spacing: Metrics.u(10)) {
                 NxButton("Canale successivo", icon: "chevron.up", kind: .primary) { model.zap(1) }
-                NxButton("Esci", kind: .quiet) { app.playing = nil }
+                NxButton("Esci", kind: .quiet) { app.closePlayer() }
             }
         }
         .padding(Metrics.u(26))
@@ -363,7 +375,7 @@ struct LivePlayerView: View {
                     OptionRow(title: store.favorites.contains(c.streamId) ? "Togli dai preferiti" : "Aggiungi ai preferiti", selected: false) { app.toggleFavorite(c) }
                     OptionRow(title: "Dettagli del programma", selected: false) {
                         showOptions = false
-                        app.playing = nil
+                        app.closePlayer()
                         app.open(.programme(c.streamId, model.now?.id ?? 0))
                     }
                 }

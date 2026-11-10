@@ -85,6 +85,8 @@ final class AppModel: ObservableObject {
     @Published var manageProfilesGate = false
     /// The downloads page opened from the VPN gate (what is downloaded plays without VPN and without network).
     @Published var offlineDownloads = false
+    /// A download playing from the VPN gate.
+    @Published var offlinePlaying: PlayRequest? = nil
     @Published var toast: String? = nil
     @Published var pendingSearch: String? = nil
     /// Bumped when the tab already on screen is tapped again (back to the top).
@@ -165,6 +167,10 @@ final class AppModel: ObservableObject {
         playing = .live(c.streamId, all.contains(c.streamId) ? all : [c.streamId] + all)
     }
     func play(_ r: PlayRequest) { playing = .vod(r) }
+    /// Leaves whatever is playing full screen.
+    func closePlayer() { playing = nil; offlinePlaying = nil }
+    /// Back to the first page of Home (the phone remote's Home key).
+    func goHome() { closePlayer(); paths = [:]; section = .home }
     /// "Riproduci" on a title: from where it was left, or the first episode.
     func playTitle(_ d: TmdbDetails) { playing = .vod(core.resumeFor(pid, d)) }
     func playTitle(_ t: TmdbTitle) {

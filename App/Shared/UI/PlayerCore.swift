@@ -204,7 +204,7 @@ struct OptionSheet<Content: View>: View {
     var body: some View {
         NavigationStack {
             List { content() }
-                .scrollContentBackground(.hidden)
+                .nxClearList()
                 .navigationTitle(title)
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)

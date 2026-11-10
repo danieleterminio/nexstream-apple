@@ -70,10 +70,16 @@ final class SearchIndex {
             jobs.append { (try? await t.discover("movie", [("with_original_language", "it"), ("sort_by", "popularity.desc")], page: p)) ?? [] }
         }
         let lists = await mapConcurrent(jobs, limit: 6) { await $0() }
-        let all = lists.flatMap { $0 }.filter { ($0.mediaType == "movie" || $0.mediaType == "tv") && $0.posterPath != nil && !$0.adult }.distinct { $0.key }
+        var flat = [TmdbTitle]()
+        for l in lists { flat.append(contentsOf: l) }
+        let wanted: [TmdbTitle] = flat.filter { (t: TmdbTitle) -> Bool in
+            let isTitle = t.mediaType == "movie" || t.mediaType == "tv"
+            return isTitle && t.posterPath != nil && !t.adult
+        }
+        let all: [TmdbTitle] = wanted.distinct { $0.key }
         if all.count < 100 { return }
         load(all)
-        if let d = try? JSONEncoder().encode(all) { try? d.write(to: file, options: .atomic) }
+        if let d: Data = try? JSONEncoder().encode(all) { try? d.write(to: file, options: Data.WritingOptions.atomic) }
         NxLog.i("NxSearch", "index built: \(all.count) titles")
     }
 

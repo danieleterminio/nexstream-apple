@@ -19,6 +19,11 @@ struct NexStreamApp: App {
                 .onOpenURL { app.core.handle(url: $0) }
                 .onChange(of: phase) { _, p in
                     if p == .active { Vpn.shared.refresh(); app.core.checkAlerts(); PlatformServices.shared.appBecameActive() }
+                    #if os(tvOS)
+                    if p == .active { RemoteHost.shared.start() } else if p == .background { RemoteHost.shared.stop() }
+                    #else
+                    if p == .active { app.core.downloads.wake() }
+                    #endif
                 }
         }
     }
@@ -35,9 +40,20 @@ struct RootView: View {
             NxColor.bg.ignoresSafeArea()
             content
             if let t = app.toast { ToastView(text: t) }
+            #if os(tvOS)
+            RemotePairBanner()
+            #endif
             if intro { BrandIntro { withAnimation(.easeOut(duration: 0.35)) { intro = false } } }
         }
         .animation(.easeInOut(duration: 0.25), value: app.toast)
+        .onAppear {
+            #if os(tvOS)
+            RemoteHost.shared.start()
+            #else
+            app.core.downloads.wake()
+            #endif
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .nxRemoteKey)) { n in if (n.object as? String) == "home" { app.goHome() } }
     }
 
     @ViewBuilder private var content: some View {
