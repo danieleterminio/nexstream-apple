@@ -1,7 +1,7 @@
 import Foundation
 
 /// Keeps an observation alive; cancelling (or dropping) it stops the callbacks.
-final class Subscription {
+final class Watch {
     private var onCancel: (() -> Void)?
     init(_ onCancel: @escaping () -> Void) { self.onCancel = onCancel }
     func cancel() { onCancel?(); onCancel = nil }
@@ -30,14 +30,14 @@ final class Observable<T> {
     }
 
     /// Observes changes; with `fire` the current value is delivered at once.
-    func observe(fire: Bool = true, _ handler: @escaping (T) -> Void) -> Subscription {
+    func observe(fire: Bool = true, _ handler: @escaping (T) -> Void) -> Watch {
         lock.lock()
         let id = nextId; nextId += 1
         subs[id] = handler
         let now = current
         lock.unlock()
         if fire { handler(now) }
-        return Subscription { [weak self] in
+        return Watch { [weak self] in
             guard let self = self else { return }
             self.lock.lock(); self.subs[id] = nil; self.lock.unlock()
         }
@@ -55,12 +55,12 @@ final class Signal<T> {
         for h in handlers { h(value) }
     }
 
-    func observe(_ handler: @escaping (T) -> Void) -> Subscription {
+    func observe(_ handler: @escaping (T) -> Void) -> Watch {
         lock.lock()
         let id = nextId; nextId += 1
         subs[id] = handler
         lock.unlock()
-        return Subscription { [weak self] in
+        return Watch { [weak self] in
             guard let self = self else { return }
             self.lock.lock(); self.subs[id] = nil; self.lock.unlock()
         }

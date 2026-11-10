@@ -4,10 +4,14 @@ import Foundation
 /// `split`), on top of NSRegularExpression (ICU, same dialect as java.util.regex for everything used here).
 final class Rx {
     let re: NSRegularExpression
+    /// The same pattern anchored at both ends, for `matches`.
+    private let full: NSRegularExpression
 
     init(_ pattern: String, _ options: NSRegularExpression.Options = []) {
-        do { re = try NSRegularExpression(pattern: pattern, options: options) }
-        catch { fatalError("bad regex \(pattern): \(error)") }
+        do {
+            re = try NSRegularExpression(pattern: pattern, options: options)
+            full = try NSRegularExpression(pattern: #"\A(?:"# + pattern + #")\z"#, options: options)
+        } catch { fatalError("bad regex \(pattern): \(error)") }
     }
     /// Case-insensitive.
     static func i(_ pattern: String) -> Rx { Rx(pattern, [.caseInsensitive]) }
@@ -45,12 +49,7 @@ final class Rx {
     }
     /// The whole string matches.
     func matches(_ s: String) -> Bool {
-        let full = NSRange(s.startIndex..., in: s)
-        guard let r = re.firstMatch(in: s, options: [.anchored], range: full) else { return false }
-        if r.range.location == full.location && r.range.length == full.length { return true }
-        // a shorter anchored alternative may have won: look for any match covering everything
-        for m in re.matches(in: s, options: [.anchored], range: full) where m.range.length == full.length { return true }
-        return false
+        full.firstMatch(in: s, options: [], range: NSRange(s.startIndex..., in: s)) != nil
     }
     /// Replaces every match; `template` may use `$1`.
     func replace(_ s: String, _ template: String = "") -> String {
