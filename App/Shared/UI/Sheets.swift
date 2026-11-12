@@ -161,7 +161,7 @@ private struct SheetPanel: View {
                     .frame(maxWidth: 560)
                     .frame(maxHeight: item.style == .page ? .infinity : g.size.height * 0.78, alignment: .top)
                     .fixedSize(horizontal: false, vertical: item.style != .page)
-                    .background(NxColor.ink2.ignoresSafeArea(edges: .bottom), in: UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14, style: .continuous))
+                    .background { UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14, style: .continuous).fill(NxColor.ink2).ignoresSafeArea(edges: .bottom) }
                     .offset(y: drag)
                     .padding(.top, item.style == .page ? 50 : 0)
                 }

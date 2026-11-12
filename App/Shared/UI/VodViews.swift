@@ -78,7 +78,7 @@ final class VodHomeModel: ObservableObject {
                         if let b = CatalogRepository.badgeFor(t, e) { badges[t.key] = CardOverlay(badge: b) }
                     }
                 }
-                listRow = titles.isEmpty ? nil : VodRow(id: "mylist", title: "Da guardare", items: titles)
+                listRow = titles.isEmpty ? nil : VodRow(id: "mylist", title: "La mia lista", items: titles)
             }
             publish()
         }

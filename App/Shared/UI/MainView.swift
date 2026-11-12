@@ -10,6 +10,7 @@ struct MainView: View {
     @State private var visited: Set<AppSection> = []
     #if os(tvOS)
     @FocusState private var rail: AppSection?
+    @Namespace private var scope
     static let tabs: [AppSection] = [.search, .home, .live, .guide, .movies, .series, .mine, .settings]
     #else
     static let tabs: [AppSection] = [.home, .live, .guide, .mine]
@@ -23,11 +24,17 @@ struct MainView: View {
                     .disabled(s != app.section)
                     .allowsHitTesting(s == app.section)
                     .accessibilityHidden(s != app.section)
+                    #if os(tvOS)
+                    .prefersDefaultFocus(s == app.section, in: scope)
+                    #endif
             }
             #if os(tvOS)
             SideRail(profile: profile, focus: $rail)
             #endif
         }
+        #if os(tvOS)
+        .focusScope(scope)
+        #endif
         #if os(iOS)
         .safeAreaInset(edge: .bottom, spacing: 0) { TabBar() }
         .ignoresSafeArea(.keyboard, edges: .bottom)

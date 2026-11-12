@@ -46,10 +46,25 @@ Con un account a pagamento l'app dura un anno, poi va firmata di nuovo. I dati r
 2. **Linea**: nome utente e password. Sull'Apple TV c'è anche "Accedi dal telefono" (codice QR).
 3. **Profili**: creane uno, oppure copia quelli dell'app Android da Impostazioni › "Copia o invia i profili".
 
+## 5. Il player
+
+- Il video parte **in verticale**: in alto l'immagine, sotto le informazioni e i canali (o gli episodi). Ruotando il telefono, o con il tasto in basso a destra del video, va a **tutto schermo**.
+- È il player di sistema: compare nel **Centro di Controllo** e sulla schermata di blocco, si manda in **AirPlay** con il tasto in alto a destra, e uscendo dall'app continua in una **finestra (picture in picture)**.
+- I canali che il player di sistema non sa decodificare (rari: vecchi canali in MPEG-2) passano da soli al motore di riserva, che non ha AirPlay né finestra. Se i video non partono, in Impostazioni c'è "Player compatibile" che usa sempre quello.
+- AirPlay dei canali in diretta: l'Apple TV (o la TV AirPlay) scarica il video dal telefono, quindi telefono e TV devono essere sulla stessa rete e la VPN deve lasciare passare la rete di casa (in NordVPN: "Accesso alla rete locale").
+
+## 6. CarPlay
+
+Apple non permette a nessuna app di mostrare video sullo schermo dell'auto. Quello che c'è:
+
+- **In riproduzione**: con qualsiasi certificato, quando riproduci dal telefono l'auto mostra titolo, copertina e i tasti pausa / canale successivo (anche dai comandi al volante).
+- **App NexStream sullo schermo dell'auto** (liste di canali, film e serie, solo audio, e ricerca vocale con Siri): compare solo se l'app è firmata con un profilo che contiene i permessi `com.apple.developer.carplay-audio` e, per la voce, `com.apple.developer.siri`. Il permesso CarPlay si chiede ad Apple dall'account sviluppatore (developer.apple.com/contact/carplay, categoria "Audio"); una volta concesso si crea un profilo per `app.nexstream.one` con CarPlay e Siri attivi e si firma l'ipa con quello. Il file `docs\NexStream.entitlements` elenca i permessi da passare allo strumento di firma. Il certificato legato all'UDID di norma non li ha: in quel caso l'app funziona tutta, ma non compare in auto.
+- **Video in auto da fermi**: iOS 26 permette di mandare il video in AirPlay allo schermo dell'auto a veicolo parcheggiato, sulle auto che lo supportano. Si usa il tasto AirPlay del player.
+
 ## Differenze rispetto ad Android
 
-- **Apple TV e dati**: tvOS può svuotare la memoria temporanea di un'app chiusa. Canali, guida e immagini si riscaricano da soli; profili, preferiti, "Da guardare" e posizioni vengono ripristinati da una copia di sicurezza interna.
+- **Apple TV e dati**: tvOS può svuotare la memoria temporanea di un'app chiusa. Canali, guida e immagini si riscaricano da soli; profili, preferiti, lista e posizioni vengono ripristinati da una copia di sicurezza interna.
 - **Promemoria**: su iPhone arriva la notifica anche ad app chiusa; sull'Apple TV l'avviso compare solo con NexStream aperto (tvOS non ha notifiche).
-- **Telecomando dal telefono**: l'iPhone comanda per intero NexStream su Fire TV e box Android. Verso l'Apple TV funzionano cambio canale, ricerca, Home e pausa; per le frecce c'è già il telecomando Apple TV nel Centro di Controllo dell'iPhone.
+- **Telecomando dal telefono**: l'iPhone comanda per intero NexStream su Fire TV e box Android (la box deve avere NexStream aperto; se la VPN del telefono blocca la rete di casa, attiva l'accesso alla rete locale). Verso l'Apple TV funzionano cambio canale, ricerca, Home e pausa; per le frecce c'è già il telecomando Apple TV nel Centro di Controllo dell'iPhone.
 - **Download** (solo iPhone): l'app deve restare aperta finché il download finisce.
-- **Picture in picture e trailer**: non presenti in questa versione.
+- **Trailer**: non presenti in questa versione.

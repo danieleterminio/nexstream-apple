@@ -167,7 +167,12 @@ final class AppModel: ObservableObject {
                 if let c = core.channels.visible().first { play(c) }
             }
         }
-        if Demo.args.contains("-nxFull") { playerFull = true }
+        if Demo.args.contains("-nxFull") {
+            Task {
+                try? await Task.sleep(nanoseconds: 6_000_000_000)
+                PlatformServices.shared.rotate(landscape: true)
+            }
+        }
         if Demo.args.contains("-nxPlayVod") {
             Task {
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
@@ -277,7 +282,7 @@ final class AppModel: ObservableObject {
     func toggleList(_ t: TmdbTitle) {
         let now = core.library.isInList(pid, t.tmdbId, t.media)
         core.library.toggleList(pid, t.tmdbId, t.media, currently: now)
-        say(now ? "Tolto da Da guardare" : "Aggiunto a Da guardare")
+        say(now ? "Tolto dalla tua lista" : "Aggiunto alla tua lista")
     }
 }
 

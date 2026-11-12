@@ -191,7 +191,7 @@ enum Transfer {
         if nProfiles == 0 { return (nil, "Nessun profilo ricevuto") }
         var parts = [nNew > 0 ? "\(nNew) \(nNew == 1 ? "profilo nuovo" : "profili nuovi")" : "\(nProfiles) \(nProfiles == 1 ? "profilo aggiornato" : "profili aggiornati")"]
         if nFav > 0 { parts.append("\(nFav) \(nFav == 1 ? "canale preferito" : "canali preferiti")") }
-        if nList > 0 { parts.append("\(nList) \(nList == 1 ? "titolo" : "titoli") in Da guardare") }
+        if nList > 0 { parts.append("\(nList) \(nList == 1 ? "titolo" : "titoli") nella lista") }
         if nTeams > 0 { parts.append("\(nTeams) \(nTeams == 1 ? "squadra" : "squadre")") }
         return (parts.joined(separator: ", "), nil)
     }
@@ -296,7 +296,7 @@ struct TransferView: View {
     }
 
     @ViewBuilder private var receive: some View {
-        Text("Sull'altro dispositivo apri Impostazioni, poi “Invia a un altro dispositivo”, scegli questo e scrivi il codice. Arrivano profili, canali preferiti, Da guardare e squadre. Qui non viene cancellato nulla.")
+        Text("Sull'altro dispositivo apri Impostazioni, poi “Invia a un altro dispositivo”, scegli questo e scrivi il codice. Arrivano profili, canali preferiti, la tua lista e le squadre. Qui non viene cancellato nulla.")
             .font(NxFont.meta).foregroundStyle(NxColor.textMuted)
         if let l = link { LanLinkPanel(link: l, title: Lan.deviceName().substringAfter("· "), hint: "Questo dispositivo è pronto a ricevere per 10 minuti.") }
         else if noNetwork { StateMessage(icon: "wifi.slash", title: "Nessuna rete di casa", text: "Collega questo dispositivo al Wi-Fi o al cavo di rete.").frame(height: Metrics.u(220)) }
