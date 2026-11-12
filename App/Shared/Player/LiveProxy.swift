@@ -25,6 +25,7 @@ final class LiveProxy: NSObject, URLSessionDataDelegate {
     private var stopped = false
     private var readySent = false
     private var unsupported = false
+    private var ended = false
     private var upstream: URLRequest?
     private(set) var info: TsSegmenter.StreamInfo? = nil
 
@@ -113,6 +114,9 @@ final class LiveProxy: NSObject, URLSessionDataDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if stopped { return }
         if let e = error { NxLog.w("NxProxy", "download ended: \(e.localizedDescription)") }
+        segmenter.finish()
+        ended = true
+        if !readySent && !segments.isEmpty && !unsupported { publish() }
         finish(early: !readySent)
     }
 
@@ -136,7 +140,11 @@ final class LiveProxy: NSObject, URLSessionDataDelegate {
         if stopped { return }
         segments.append(s)
         if segments.count > LiveProxy.kept { segments.removeFirst(segments.count - LiveProxy.kept) }
-        if !readySent && segments.count >= 2 {
+        if !readySent && segments.count >= 2 { publish() }
+    }
+
+    private func publish() {
+        do {
             readySent = true
             // the target length is fixed from what the first segments look like: the player needs it constant
             let longest = segments.map { $0.duration }.max() ?? 2
@@ -243,6 +251,7 @@ final class LiveProxy: NSObject, URLSessionDataDelegate {
         let window = segments.suffix(LiveProxy.windowSize)
         var s = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:\(target)\n#EXT-X-MEDIA-SEQUENCE:\(window.first?.seq ?? 0)\n"
         for seg in window { s += "#EXTINF:" + String(format: "%.3f", seg.duration) + ",\nseg\(seg.seq).ts\n" }
+        if ended { s += "#EXT-X-ENDLIST\n" }
         return s
     }
 }

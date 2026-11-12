@@ -44,6 +44,9 @@ struct PlayerScreen: View {
             .onAppear { app.playerFull = full }
             #endif
         }
+        #if os(tvOS)
+        .ignoresSafeArea()
+        #endif
         .overlay(alignment: .bottomTrailing) { if let r = app.reminder { ReminderBanner(reminder: r) } }
     }
 }

@@ -238,12 +238,8 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
         p.onEnded = { [weak self] early in
             guard let self = self, self.gen == g else { return }
             if early { self.fail(); return }
-            // the line closed the stream: what is buffered plays out, then the caller connects again
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                guard let self = self, self.gen == g, self.loaded else { return }
-                self.state = .ended
-                self.onEnded?()
-            }
+            // the line closed the stream: the playlist is now closed too, so what is buffered plays out and the
+            // system player reports the end by itself; the caller then connects again
         }
         p.start(url: u, headers: req.headers)
     }

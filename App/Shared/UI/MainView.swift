@@ -10,7 +10,10 @@ struct MainView: View {
     @State private var visited: Set<AppSection> = []
     #if os(tvOS)
     @FocusState private var rail: AppSection?
-    @Namespace private var scope
+    /// The side menu can be reached only a moment after the page settles: so the focus starts in the page, and
+    /// choosing a section moves it into that section.
+    @State private var railReady = false
+    @State private var railPulse = 0
     static let tabs: [AppSection] = [.search, .home, .live, .guide, .movies, .series, .mine, .settings]
     #else
     static let tabs: [AppSection] = [.home, .live, .guide, .mine]
@@ -24,16 +27,19 @@ struct MainView: View {
                     .disabled(s != app.section)
                     .allowsHitTesting(s == app.section)
                     .accessibilityHidden(s != app.section)
-                    #if os(tvOS)
-                    .prefersDefaultFocus(s == app.section, in: scope)
-                    #endif
             }
             #if os(tvOS)
-            SideRail(profile: profile, focus: $rail)
+            SideRail(profile: profile, focus: $rail).disabled(!railReady)
             #endif
         }
         #if os(tvOS)
-        .focusScope(scope)
+        .onChange(of: app.playing == nil) { _, _ in pulse() }
+        .onChange(of: app.sheets.isEmpty) { _, _ in pulse() }
+        .task(id: railPulse) {
+            railReady = false
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            if !Task.isCancelled { railReady = true }
+        }
         #endif
         #if os(iOS)
         .safeAreaInset(edge: .bottom, spacing: 0) { TabBar() }
@@ -56,6 +62,13 @@ struct MainView: View {
         }
         #endif
         visited.insert(app.section)
+        pulse()
+    }
+
+    private func pulse() {
+        #if os(tvOS)
+        railPulse += 1
+        #endif
     }
 
     @ViewBuilder private func root(_ s: AppSection) -> some View {

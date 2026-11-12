@@ -24,6 +24,12 @@ run_one() { # label productdir device-regex
     xcrun simctl launch "$UDID" "$BUNDLE" "${ARGV[@]}" || echo "[$LABEL] launch failed"
     sleep "$SECS"
     xcrun simctl io "$UDID" screenshot "$OUT/$LABEL-$NAME.png" > /dev/null 2>&1 || echo "[$LABEL] screenshot failed"
+    if ! xcrun simctl spawn "$UDID" launchctl list 2>/dev/null | grep -q "$BUNDLE"; then
+      echo "[$LABEL] app not running after shot $NAME"
+      xcrun simctl spawn "$UDID" log show --last 2m --style compact --predicate 'process == "NexStream" OR eventMessage CONTAINS[c] "nexstream"' 2>/dev/null | tail -220 > "$OUT/$LABEL-$NAME-died.txt"
+      sleep 6
+      find ~/Library/Logs/DiagnosticReports -name "NexStream*" -mmin -4 -exec cp {} "$OUT/" \; 2>/dev/null || true
+    fi
     IFS='|'
   done
   local DATA
