@@ -1,24 +1,52 @@
 import SwiftUI
 
-/// A tappable card with the platform's own feedback: the lift and glow of the Apple TV focus, a soft press on touch.
-struct CardButton<Label: View>: View {
-    let action: () -> Void
-    @ViewBuilder var label: () -> Label
-    var body: some View {
-        #if os(tvOS)
-        Button(action: action, label: label).buttonStyle(.card)
-        #else
-        Button(action: action, label: label).buttonStyle(PressScaleStyle())
-        #endif
+/// Apple TV: what the remote is on, so the top of the page can describe it (the title, the plot, the artwork).
+@MainActor
+final class FocusHub: ObservableObject {
+    static let shared = FocusHub()
+    @Published private(set) var item: HeroItem? = nil
+    private var pending: Task<Void, Never>? = nil
+    private init() {}
+    /// Debounced: flying over a row must not load one backdrop per card.
+    func focus(_ i: HeroItem) {
+        pending?.cancel()
+        pending = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 260_000_000)
+            if Task.isCancelled { return }
+            self?.item = i
+        }
     }
+    func clear() { pending?.cancel(); item = nil }
 }
 
-struct PressScaleStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
-            .opacity(configuration.isPressed ? 0.85 : 1)
-            .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
+/// A tappable card: a white frame and a lift under the Apple TV focus, a soft press on touch, a long press for the
+/// menu on the phone.
+struct CardButton<Label: View>: View {
+    let action: () -> Void
+    var radius: CGFloat = Metrics.radius
+    var onFocus: (() -> Void)? = nil
+    var onLong: (() -> Void)? = nil
+    @ViewBuilder var label: () -> Label
+
+    var body: some View {
+        #if os(tvOS)
+        Button(action: action) {
+            Focusable(onFocus: onFocus) { focused in
+                label()
+                    .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(Color.white, lineWidth: focused ? 5 : 0))
+                    .scaleEffect(focused ? 1.07 : 1)
+                    .shadow(color: .black.opacity(focused ? 0.6 : 0), radius: 18, y: 10)
+                    .animation(.easeOut(duration: 0.16), value: focused)
+            }
+        }
+        .buttonStyle(NxPlainStyle(scale: 1))
+        #else
+        Button(action: action, label: label)
+            .buttonStyle(NxPlainStyle(scale: 0.96))
+            .simultaneousGesture(LongPressGesture(minimumDuration: 0.45).onEnded { _ in
+                if let l = onLong { UIImpactFeedbackGenerator(style: .medium).impactOccurred(); l() }
+            })
+        #endif
     }
 }
 
@@ -103,49 +131,49 @@ struct ShowCard: View {
     var favorite: Bool = false
     var reminder: Bool = false
     let onTap: () -> Void
-    var onPlay: (() -> Void)? = nil
-    var onFavorite: (() -> Void)? = nil
-    var onReminder: (() -> Void)? = nil
+    @EnvironmentObject var app: AppModel
 
     private var width: CGFloat { style == .wide ? Metrics.showCardW : Metrics.channelCardW }
 
     var body: some View {
-        CardButton(action: onTap) {
-            VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: Metrics.u(6)) {
+            CardButton(action: onTap, onFocus: { FocusHub.shared.focus(.live(showing)) }, onLong: { menu() }) {
                 ZStack(alignment: .bottomLeading) {
                     ShowingArt(showing: showing)
-                    NxColor.cardFade.opacity(0.75)
-                    VStack(alignment: .leading, spacing: Metrics.u(6)) {
+                    NxColor.cardFade.opacity(0.7)
+                    VStack(alignment: .leading, spacing: Metrics.u(5)) {
                         HStack(alignment: .top) {
-                            ChannelLogo(channel: showing.channel, height: 20)
+                            ChannelLogo(channel: showing.channel, height: 18)
                             Spacer(minLength: 4)
-                            if reminder { Image(systemName: "bell.fill").font(.system(size: 12 * Metrics.type)).foregroundStyle(NxColor.gold) }
-                            if favorite { Image(systemName: "star.fill").font(.system(size: 12 * Metrics.type)).foregroundStyle(.white) }
+                            if reminder { Image(systemName: "bell.fill").font(.system(size: 11 * Metrics.type)).foregroundStyle(NxColor.gold) }
+                            if favorite { Image(systemName: "star.fill").font(.system(size: 11 * Metrics.type)).foregroundStyle(.white) }
                         }
                         Spacer(minLength: 0)
                         ShowingTags(showing: showing, showKind: false)
                         if let p = showing.progress(), showing.isLive() { NxProgressBar(value: p) }
                     }
-                    .padding(Metrics.u(10))
+                    .padding(Metrics.u(8))
                 }
                 .frame(width: width, height: width * 9 / 16)
-                .clipped()
-                VStack(alignment: .leading, spacing: Metrics.u(2)) {
-                    Text(showing.cardTitle).font(NxFont.bodyStrong).foregroundStyle(NxColor.text).lineLimit(1)
-                    Text([showing.whenLabel(), showing.cardLine].compactMap { $0 }.joined(separator: " · "))
-                        .font(NxFont.caption).foregroundStyle(NxColor.textDim).lineLimit(1)
-                }
-                .padding(.horizontal, Metrics.u(10)).padding(.vertical, Metrics.u(8))
-                .frame(width: width, alignment: .leading)
-                .background(NxColor.ink2)
+                .clipShape(RoundedRectangle(cornerRadius: Metrics.radius, style: .continuous))
             }
-            .clipShape(RoundedRectangle(cornerRadius: Metrics.radius, style: .continuous))
+            VStack(alignment: .leading, spacing: Metrics.u(1)) {
+                Text(showing.cardTitle).font(NxFont.ui(13, .bold)).foregroundStyle(NxColor.text).lineLimit(1)
+                Text([showing.whenLabel(), showing.cardLine].compactMap { $0 }.joined(separator: " · "))
+                    .font(NxFont.ui(11, .medium)).foregroundStyle(NxColor.textDim).lineLimit(1)
+            }
+            .frame(width: width, alignment: .leading)
         }
-        .contextMenu {
-            if let play = onPlay, showing.isLive() || showing.programme == nil { Button(action: play) { Label("Guarda \(showing.channel.name)", systemImage: "play.fill") } }
-            if let fav = onFavorite { Button(action: fav) { Label(favorite ? "Togli dai preferiti" : "Aggiungi ai preferiti", systemImage: favorite ? "star.slash" : "star") } }
-            if let rem = onReminder, !showing.isLive(), showing.start != nil { Button(action: rem) { Label(reminder ? "Togli il promemoria" : "Avvisami quando inizia", systemImage: reminder ? "bell.slash" : "bell") } }
-        }
+    }
+
+    private func menu() {
+        var a = [NxAction]()
+        let c = showing.channel
+        if showing.isLive() || showing.programme == nil { a.append(NxAction("Guarda \(c.name)", icon: "play.fill") { app.play(c) }) }
+        a.append(NxAction("Dettagli", icon: "info.circle") { app.openShowing(showing) })
+        a.append(NxAction(favorite ? "Togli \(c.name) dai preferiti" : "Aggiungi \(c.name) ai preferiti", icon: favorite ? "star.slash" : "star") { app.toggleFavorite(c) })
+        if !showing.isLive(), showing.start != nil { a.append(NxAction(reminder ? "Togli il promemoria" : "Avvisami quando inizia", icon: reminder ? "bell.slash" : "bell") { app.toggleReminder(showing) }) }
+        app.menu(showing.cardTitle, a)
     }
 }
 
@@ -153,47 +181,49 @@ struct ShowCard: View {
 struct ChannelCard: View {
     let showing: Showing
     var favorite: Bool = false
+    var width: CGFloat = Metrics.channelCardW
     let onTap: () -> Void
-    var onInfo: (() -> Void)? = nil
-    var onFavorite: (() -> Void)? = nil
+    @EnvironmentObject var app: AppModel
 
     var body: some View {
-        let w = Metrics.channelCardW
-        CardButton(action: onTap) {
-            VStack(alignment: .leading, spacing: 0) {
+        let w = width
+        VStack(alignment: .leading, spacing: Metrics.u(6)) {
+            CardButton(action: onTap, onFocus: { FocusHub.shared.focus(.live(showing)) }, onLong: { menu() }) {
                 ZStack(alignment: .bottomLeading) {
                     ShowingArt(showing: showing)
                     NxColor.cardFade.opacity(0.7)
                     VStack(alignment: .leading, spacing: Metrics.u(5)) {
                         HStack(alignment: .top) {
-                            ChannelLogo(channel: showing.channel, height: 20)
+                            ChannelLogo(channel: showing.channel, height: 18)
                             Spacer(minLength: 4)
-                            if favorite { Image(systemName: "star.fill").font(.system(size: 12 * Metrics.type)).foregroundStyle(.white) }
+                            if favorite { Image(systemName: "star.fill").font(.system(size: 11 * Metrics.type)).foregroundStyle(.white) }
                         }
                         Spacer(minLength: 0)
                         if showing.isLiveBroadcast && showing.isLive() { NxTag(text: "Diretta", color: NxColor.accent) }
                         if let p = showing.progress() { NxProgressBar(value: p) }
                     }
-                    .padding(Metrics.u(9))
+                    .padding(Metrics.u(8))
                 }
                 .frame(width: w, height: w * 9 / 16)
-                .clipped()
-                VStack(alignment: .leading, spacing: Metrics.u(2)) {
-                    Text(showing.programme == nil && showing.channel.event == nil ? showing.channel.name : showing.cardTitle)
-                        .font(NxFont.ui(14, .semibold)).foregroundStyle(NxColor.text).lineLimit(1)
-                    Text(showing.programme == nil ? (showing.channel.eventSub ?? "Nessuna guida") : (showing.whenLabel() ?? ""))
-                        .font(NxFont.caption).foregroundStyle(NxColor.textDim).lineLimit(1)
-                }
-                .padding(.horizontal, Metrics.u(9)).padding(.vertical, Metrics.u(7))
-                .frame(width: w, alignment: .leading)
-                .background(NxColor.ink2)
+                .clipShape(RoundedRectangle(cornerRadius: Metrics.radius, style: .continuous))
             }
-            .clipShape(RoundedRectangle(cornerRadius: Metrics.radius, style: .continuous))
+            VStack(alignment: .leading, spacing: Metrics.u(1)) {
+                Text(showing.programme == nil && showing.channel.event == nil ? showing.channel.name : showing.cardTitle)
+                    .font(NxFont.ui(13, .bold)).foregroundStyle(NxColor.text).lineLimit(1)
+                Text(showing.programme == nil ? (showing.channel.eventSub ?? showing.channel.name) : (showing.whenLabel() ?? ""))
+                    .font(NxFont.ui(11, .medium)).foregroundStyle(NxColor.textDim).lineLimit(1)
+            }
+            .frame(width: w, alignment: .leading)
         }
-        .contextMenu {
-            if let info = onInfo { Button(action: info) { Label("Dettagli del programma", systemImage: "info.circle") } }
-            if let fav = onFavorite { Button(action: fav) { Label(favorite ? "Togli dai preferiti" : "Aggiungi ai preferiti", systemImage: favorite ? "star.slash" : "star") } }
-        }
+    }
+
+    private func menu() {
+        let c = showing.channel
+        app.menu(c.name, [
+            NxAction("Guarda \(c.name)", icon: "play.fill") { app.play(c) },
+            NxAction("Dettagli del programma", icon: "info.circle") { app.openShowing(showing) },
+            NxAction(favorite ? "Togli dai preferiti" : "Aggiungi ai preferiti", icon: favorite ? "star.slash" : "star") { app.toggleFavorite(c) },
+        ])
     }
 }
 
@@ -204,74 +234,94 @@ struct PosterCard: View {
     var rank: Int? = nil
     var inList: Bool = false
     var width: CGFloat = Metrics.posterW
+    var menu: Bool = true
     let onTap: () -> Void
-    var onPlay: (() -> Void)? = nil
-    var onList: (() -> Void)? = nil
+    @EnvironmentObject var app: AppModel
 
     var body: some View {
-        CardButton(action: onTap) {
-            ZStack(alignment: .bottomLeading) {
-                NxImage(url: Img.tmdb(title.posterPath, "w342"), maxPixel: 500) {
-                    ZStack {
-                        NxColor.ink3
-                        Text(title.displayTitle).font(NxFont.caption).foregroundStyle(NxColor.textMuted).multilineTextAlignment(.center).padding(8)
-                    }
-                }
-                if rank != nil || overlay?.progress != nil || overlay?.label != nil { NxColor.cardFade.opacity(0.8) }
-                VStack(alignment: .leading, spacing: Metrics.u(4)) {
-                    HStack(alignment: .top) {
-                        if let b = overlay?.badge { NxTag(text: b, color: NxColor.accent) }
-                        Spacer(minLength: 0)
-                        if inList { Image(systemName: "bookmark.fill").font(.system(size: 12 * Metrics.type)).foregroundStyle(.white) }
-                    }
-                    Spacer(minLength: 0)
-                    if let r = rank {
-                        Text("\(r)").font(Font.custom("Sora-Regular_ExtraBold", fixedSize: width * 0.42)).foregroundStyle(.white).shadow(color: .black.opacity(0.6), radius: 6)
-                    }
-                    if let l = overlay?.label { Text(l).font(NxFont.label).foregroundStyle(.white) }
-                    if let p = overlay?.progress { NxProgressBar(value: p) }
-                }
-                .padding(Metrics.u(8))
+        HStack(alignment: .bottom, spacing: 0) {
+            if let r = rank {
+                Text("\(r)").font(Font.custom("Sora-Regular_ExtraBold", fixedSize: width * (r >= 10 ? 0.78 : 0.98)))
+                    .tracking(r >= 10 ? -width * 0.09 : 0)
+                    .foregroundStyle(LinearGradient(colors: [Color.white.opacity(0.92), Color.white.opacity(0.35)], startPoint: .top, endPoint: .bottom))
+                    .lineLimit(1).fixedSize()
+                    .padding(.trailing, -width * 0.13)
+                    .padding(.bottom, -width * 0.14)
+                    .allowsHitTesting(false)
             }
-            .frame(width: width, height: width * 1.5)
-            .clipShape(RoundedRectangle(cornerRadius: Metrics.radius, style: .continuous))
-        }
-        .contextMenu {
-            if let play = onPlay { Button(action: play) { Label("Riproduci", systemImage: "play.fill") } }
-            if let list = onList { Button(action: list) { Label(inList ? "Togli da Da guardare" : "Aggiungi a Da guardare", systemImage: inList ? "bookmark.slash" : "bookmark") } }
+            CardButton(action: onTap, onFocus: { FocusHub.shared.focus(.vod(title, nil)) }, onLong: menu ? { openMenu() } : nil) {
+                ZStack(alignment: .bottomLeading) {
+                    NxImage(url: Img.tmdb(title.posterPath, "w342"), maxPixel: 500) {
+                        ZStack {
+                            NxColor.ink3
+                            Text(title.displayTitle).font(NxFont.caption).foregroundStyle(NxColor.textMuted).multilineTextAlignment(.center).padding(8)
+                        }
+                    }
+                    if overlay?.progress != nil || overlay?.label != nil { NxColor.cardFade.opacity(0.8) }
+                    VStack(alignment: .leading, spacing: Metrics.u(4)) {
+                        HStack(alignment: .top) {
+                            if let b = overlay?.badge { NxTag(text: b, color: NxColor.accent) }
+                            Spacer(minLength: 0)
+                        }
+                        Spacer(minLength: 0)
+                        if let l = overlay?.label { Text(l).font(NxFont.label).foregroundStyle(.white) }
+                        if let p = overlay?.progress { NxProgressBar(value: p) }
+                    }
+                    .padding(Metrics.u(6))
+                }
+                .frame(width: width, height: width * 1.5)
+                .clipShape(RoundedRectangle(cornerRadius: Metrics.radius, style: .continuous))
+            }
         }
         .accessibilityLabel(title.displayTitle)
     }
+
+    private func openMenu() {
+        app.menu(title.displayTitle, [
+            NxAction("Riproduci", icon: "play.fill") { app.playTitle(title) },
+            NxAction("Dettagli", icon: "info.circle") { app.openTitle(title) },
+            NxAction(inList ? "Togli dalla mia lista" : "Aggiungi alla mia lista", icon: inList ? "checkmark" : "plus") { app.toggleList(title) },
+        ])
+    }
 }
 
-/// Landscape card of an on-demand title (continue watching, coming soon).
+/// Landscape card of an on-demand title: what was left half way (play on it, the progress under it), coming soon.
 struct LandscapeTitleCard: View {
     let title: TmdbTitle
     var overlay: CardOverlay? = nil
     var caption: String? = nil
+    var play: Bool = false
     let onTap: () -> Void
+    @EnvironmentObject var app: AppModel
+
     var body: some View {
-        let w = Metrics.showCardW * 0.86
-        CardButton(action: onTap) {
-            VStack(alignment: .leading, spacing: 0) {
-                ZStack(alignment: .bottomLeading) {
+        let w = Metrics.showCardW * 0.82
+        VStack(alignment: .leading, spacing: Metrics.u(6)) {
+            CardButton(action: onTap, onFocus: { FocusHub.shared.focus(.vod(title, nil)) }, onLong: {
+                app.menu(title.displayTitle, [
+                    NxAction("Riproduci", icon: "play.fill") { app.playTitle(title) },
+                    NxAction("Dettagli", icon: "info.circle") { app.openTitle(title) },
+                ])
+            }) {
+                ZStack(alignment: .bottom) {
                     NxImage(url: Img.tmdb(title.backdropPath ?? title.posterPath, "w780"), maxPixel: 800) { NxColor.ink3 }
-                    NxColor.cardFade.opacity(0.7)
-                    VStack(alignment: .leading, spacing: Metrics.u(4)) {
-                        Spacer(minLength: 0)
-                        if let l = overlay?.label { Text(l).font(NxFont.label).foregroundStyle(.white) }
-                        if let p = overlay?.progress { NxProgressBar(value: p) }
-                    }.padding(Metrics.u(9))
+                    if play {
+                        Image(systemName: "play.fill").font(.system(size: 17 * Metrics.unit, weight: .bold)).foregroundStyle(.white)
+                            .frame(width: Metrics.u(42), height: Metrics.u(42))
+                            .background(Color.black.opacity(0.5), in: Circle())
+                            .overlay(Circle().stroke(Color.white, lineWidth: Metrics.u(1.5)))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    if let p = overlay?.progress { NxProgressBar(value: p, height: 3) }
                 }
-                .frame(width: w, height: w * 9 / 16).clipped()
-                VStack(alignment: .leading, spacing: Metrics.u(2)) {
-                    Text(title.displayTitle).font(NxFont.ui(14, .semibold)).foregroundStyle(NxColor.text).lineLimit(1)
-                    if let c = caption { Text(c).font(NxFont.caption).foregroundStyle(NxColor.textDim).lineLimit(1) }
-                }
-                .padding(.horizontal, Metrics.u(9)).padding(.vertical, Metrics.u(7))
-                .frame(width: w, alignment: .leading).background(NxColor.ink2)
+                .frame(width: w, height: w * 9 / 16)
+                .clipShape(RoundedRectangle(cornerRadius: Metrics.radius, style: .continuous))
             }
-            .clipShape(RoundedRectangle(cornerRadius: Metrics.radius, style: .continuous))
+            VStack(alignment: .leading, spacing: Metrics.u(1)) {
+                Text(title.displayTitle).font(NxFont.ui(13, .bold)).foregroundStyle(NxColor.text).lineLimit(1)
+                if let c = overlay?.label ?? caption { Text(c).font(NxFont.ui(11, .medium)).foregroundStyle(NxColor.textDim).lineLimit(1) }
+            }
+            .frame(width: w, alignment: .leading)
         }
     }
 }
@@ -287,7 +337,7 @@ struct CardRow<Data: RandomAccessCollection, Card: View>: View where Data.Elemen
     @ViewBuilder var card: (Data.Element) -> Card
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Metrics.u(10)) {
+        VStack(alignment: .leading, spacing: Metrics.u(8)) {
             SectionHeader(title: title, sub: sub, tag: tag)
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(alignment: .top, spacing: Metrics.cardGap) {
@@ -296,7 +346,7 @@ struct CardRow<Data: RandomAccessCollection, Card: View>: View where Data.Elemen
                 }
                 .padding(.horizontal, Metrics.gutter)
                 #if os(tvOS)
-                .padding(.vertical, 28)
+                .padding(.vertical, 22)
                 #else
                 .padding(.vertical, 2)
                 #endif
@@ -322,13 +372,11 @@ struct VodRowView: View {
     var body: some View {
         CardRow(title: title ?? row.title, sub: sub, tag: tag, items: row.items) { t in
             if row.kind == .continue || row.kind == .landscape {
-                LandscapeTitleCard(title: t, overlay: overlays[t.key], caption: row.kind == .landscape ? t.date : nil) {
+                LandscapeTitleCard(title: t, overlay: overlays[t.key], caption: row.kind == .landscape ? t.date : nil, play: row.kind == .continue) {
                     if row.kind == .continue { app.playTitle(t) } else { app.openTitle(t) }
                 }
-                .contextMenu { Button { app.openTitle(t) } label: { Label("Dettagli", systemImage: "info.circle") } }
             } else {
-                PosterCard(title: t, overlay: overlays[t.key], rank: row.kind == .top10 ? (row.items.firstIndex(of: t).map { $0 + 1 }) : nil, inList: store.listKeys.contains(t.key),
-                           onTap: { app.openTitle(t) }, onPlay: { app.playTitle(t) }, onList: { app.toggleList(t) })
+                PosterCard(title: t, overlay: overlays[t.key], rank: row.kind == .top10 ? (row.items.firstIndex(of: t).map { $0 + 1 }) : nil, inList: store.listKeys.contains(t.key)) { app.openTitle(t) }
             }
         }
     }

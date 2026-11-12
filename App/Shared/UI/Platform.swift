@@ -3,25 +3,30 @@ import UIKit
 import AVFoundation
 #if os(iOS)
 import UserNotifications
+import Intents
 #endif
 
 /// The bits that talk to the system: audio session, screen orientation while a video plays, notifications.
 final class PlatformServices: NSObject, AlertScheduler {
     static let shared = PlatformServices()
     #if os(iOS)
-    /// What the app delegate answers when the system asks which orientations are allowed.
-    static var orientations: UIInterfaceOrientationMask = .allButUpsideDown
+    /// What the app delegate answers when the system asks which orientations are allowed: the phone app is upright,
+    /// only the player may turn.
+    static var orientations: UIInterfaceOrientationMask = UIDevice.current.userInterfaceIdiom == .pad ? .all : .portrait
     private var asked = false
     #endif
 
     private override init() {
         super.init()
+        #if os(iOS)
+        // "long-form video": the session the system expects from a video app (AirPlay routes, CarPlay, Control Centre)
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, policy: .longFormVideo)
+        UNUserNotificationCenter.current().delegate = self
+        #else
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+        #endif
         NexCore.shared.reminders.scheduler = self
         NexCore.shared.teams.scheduler = self
-        #if os(iOS)
-        UNUserNotificationCenter.current().delegate = self
-        #endif
     }
 
     func appBecameActive() {}
@@ -29,25 +34,43 @@ final class PlatformServices: NSObject, AlertScheduler {
     func playerOpened() {
         try? AVAudioSession.sharedInstance().setActive(true)
         #if os(iOS)
-        setOrientation(.landscape)
+        setMask(.allButUpsideDown)
         #endif
     }
 
     func playerClosed() {
         UIApplication.shared.isIdleTimerDisabled = false
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         #if os(iOS)
-        setOrientation(.allButUpsideDown)
+        if UIDevice.current.userInterfaceIdiom != .pad {
+            setMask(.portrait)
+            request(.portrait)
+        }
         #endif
     }
 
     #if os(iOS)
-    private func setOrientation(_ mask: UIInterfaceOrientationMask) {
+    private var scene: UIWindowScene? {
+        UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first { $0.session.role == .windowApplication }
+    }
+
+    private func setMask(_ mask: UIInterfaceOrientationMask) {
         if UIDevice.current.userInterfaceIdiom == .pad { return }
         PlatformServices.orientations = mask
-        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else { return }
-        scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { _ in }
-        scene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+        scene?.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
     }
+
+    private func request(_ mask: UIInterfaceOrientationMask) {
+        scene?.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { e in NxLog.w("NxPlatform", "rotation refused: \(e.localizedDescription)") }
+    }
+
+    /// The full-screen button of the player: turns the picture without turning the phone.
+    func rotate(landscape: Bool) {
+        if UIDevice.current.userInterfaceIdiom == .pad { return }
+        request(landscape ? .landscapeRight : .portrait)
+    }
+    #else
+    func rotate(landscape: Bool) {}
     #endif
 
     // MARK: AlertScheduler
@@ -92,8 +115,13 @@ extension PlatformServices: UNUserNotificationCenterDelegate {
     }
 }
 
-/// Lets the players ask for landscape while the rest of the app follows the phone.
+/// Lets the player turn the screen while the rest of the phone app stays upright.
 final class NxAppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask { PlatformServices.orientations }
+
+    /// Siri's "riproduci … su NexStream" is answered inside the app (no extension).
+    func application(_ application: UIApplication, handlerFor intent: INIntent) -> Any? {
+        intent is INPlayMediaIntent ? PlayMediaHandler() : nil
+    }
 }
 #endif

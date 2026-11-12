@@ -6,7 +6,7 @@ struct NexStreamApp: App {
     #if os(iOS)
     @UIApplicationDelegateAdaptor(NxAppDelegate.self) private var appDelegate
     #endif
-    @StateObject private var app = AppModel()
+    @StateObject private var app = AppModel.shared
     @Environment(\.scenePhase) private var phase
 
     var body: some Scene {
@@ -15,39 +15,52 @@ struct NexStreamApp: App {
                 .environmentObject(app)
                 .environmentObject(app.store)
                 .preferredColorScheme(.dark)
-                #if os(iOS)
-                .tint(NxColor.accent)
-                #endif
+                .tint(.white)
                 .onOpenURL { app.core.handle(url: $0) }
                 .onChange(of: phase) { _, p in
                     if p == .active { Vpn.shared.refresh(); app.core.checkAlerts(); PlatformServices.shared.appBecameActive() }
                     #if os(tvOS)
                     if p == .active { RemoteHost.shared.start() } else if p == .background { RemoteHost.shared.stop() }
                     #else
-                    if p == .active { app.core.downloads.wake() }
+                    if p == .active { app.core.downloads.wake(); app.playerHidden = false }
                     #endif
                 }
         }
     }
 }
 
-/// The gates, in order: VPN → line → profile → app. Each one is a plain `if`, so when the VPN drops the whole app (player
-/// included) leaves the screen at once, and when the profile changes every page starts over.
+/// The gates, in order: VPN → line → profile → app. Each one is a plain `if`, so when the VPN drops the whole app leaves
+/// the screen at once (the app model stops the stream), and when the profile changes every page starts over. On top of
+/// the gates: the player, our panels, the short messages.
 struct RootView: View {
     @EnvironmentObject var app: AppModel
     @State private var intro = true
+
+    private var playerShown: Bool {
+        guard let p = app.playing, !app.playerHidden else { return false }
+        return app.vpn || p.isOffline
+    }
 
     var body: some View {
         ZStack {
             NxColor.bg.ignoresSafeArea()
             content
-            if let t = app.toast { ToastView(text: t) }
+                .disabled(playerShown || !app.sheets.isEmpty)
+            if playerShown {
+                PlayerScreen()
+                    .disabled(!app.sheets.isEmpty)
+                    .transition(.move(edge: .bottom))
+                    .zIndex(1)
+            }
+            SheetHost().zIndex(2)
+            if let t = app.toast { ToastView(text: t).zIndex(3) }
             #if os(tvOS)
-            RemotePairBanner()
+            RemotePairBanner().zIndex(3)
             #endif
-            if intro { BrandIntro { withAnimation(.easeOut(duration: 0.35)) { intro = false } } }
+            if intro { BrandIntro { withAnimation(.easeOut(duration: 0.35)) { intro = false } }.zIndex(4) }
         }
         .animation(.easeInOut(duration: 0.25), value: app.toast)
+        .animation(.easeOut(duration: 0.28), value: playerShown)
         .onAppear {
             #if os(tvOS)
             RemoteHost.shared.start()
@@ -61,36 +74,29 @@ struct RootView: View {
     @ViewBuilder private var content: some View {
         if !app.vpn {
             #if os(iOS)
-            if app.offlineDownloads { OfflineDownloadsGate() } else { VpnGateView() }
+            if app.offlineDownloads { DownloadsView(offline: true) } else { VpnGateView() }
             #else
             VpnGateView()
             #endif
         } else if app.session == nil {
             LoginView()
         } else if let p = app.profile {
-            MainView(profile: p)
-                .id(p.id)
-                .fullScreenCover(item: $app.playing) { playing in
-                    PlayerHost(playing: playing).environmentObject(app).environmentObject(app.store)
-                }
-                .fullScreenCover(item: onboardingBinding) { o in
-                    OnboardingView(profileId: o.id) { app.onboardingFor = nil }.environmentObject(app).environmentObject(app.store)
-                }
-                .overlay(alignment: .bottomTrailing) { if let r = app.reminder { ReminderBanner(reminder: r) } }
+            if app.onboardingFor != nil {
+                OnboardingView(profileId: app.onboardingFor ?? p.id) { app.onboardingFor = nil }
+            } else {
+                MainView(profile: p)
+                    .id(p.id)
+                    .overlay(alignment: .bottomTrailing) { if let r = app.reminder, !playerShown { ReminderBanner(reminder: r) } }
+            }
         } else if app.manageProfilesGate {
             ProfilesView(manage: true) { app.manageProfilesGate = false; app.core.profiles.refresh() }
         } else {
             ProfilesView()
         }
     }
-
-    private struct OnboardingTarget: Identifiable { let id: Int64 }
-    private var onboardingBinding: Binding<OnboardingTarget?> {
-        Binding(get: { app.onboardingFor.map { OnboardingTarget(id: $0) } }, set: { if $0 == nil { app.onboardingFor = nil } })
-    }
 }
 
-/// Opening animation: the mark breathes once on the page colour ("Respiro"), then the app shows.
+/// Opening animation: the mark breathes once on the page colour, then the app shows.
 struct BrandIntro: View {
     let onDone: () -> Void
     @State private var scale = 0.86
@@ -116,10 +122,11 @@ struct ToastView: View {
     var body: some View {
         VStack {
             Spacer()
-            Text(text).font(NxFont.meta).foregroundStyle(NxColor.text).multilineTextAlignment(.center)
-                .padding(.horizontal, Metrics.u(18)).padding(.vertical, Metrics.u(12))
-                .nxGlass(Capsule())
-                .padding(.bottom, Metrics.u(Metrics.tv ? 40 : 96))
+            Text(text).font(NxFont.ui(13, .bold)).foregroundStyle(.black).multilineTextAlignment(.center)
+                .padding(.horizontal, Metrics.u(16)).padding(.vertical, Metrics.u(11))
+                .background(Color.white, in: RoundedRectangle(cornerRadius: Metrics.u(5), style: .continuous))
+                .padding(.horizontal, Metrics.u(20))
+                .padding(.bottom, Metrics.u(Metrics.tv ? 40 : 84))
         }
         .transition(.move(edge: .bottom).combined(with: .opacity))
         .allowsHitTesting(false)
@@ -145,13 +152,17 @@ struct ReminderBanner: View {
                     app.core.reminderAlert.value = nil
                     if let c = app.core.channels.get(reminder.streamId) { app.play(c) }
                 }
-                NxButton("Ignora", kind: .quiet) { app.core.reminderAlert.value = nil }
+                NxButton("Ignora", kind: .secondary) { app.core.reminderAlert.value = nil }
             }
+            #if os(tvOS)
+            .focusSection()
+            #endif
         }
-        .padding(Metrics.u(18))
-        .frame(maxWidth: Metrics.u(380), alignment: .leading)
-        .nxGlassPanel()
-        .padding(Metrics.u(18))
+        .padding(Metrics.u(16))
+        .frame(maxWidth: Metrics.u(360), alignment: .leading)
+        .nxPanel(fill: NxColor.ink3)
+        .padding(Metrics.u(16))
+        .padding(.bottom, Metrics.u(Metrics.tv ? 0 : 60))
         .transition(.move(edge: .trailing).combined(with: .opacity))
     }
 }

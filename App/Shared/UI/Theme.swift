@@ -7,42 +7,37 @@ extension Color {
     }
 }
 
-/// Brand tokens 3.1: crimson on neutral ink. Red is for state (live, progress, selection), never decoration.
+/// Brand tokens 4.0: flat, black, quiet. White means "press here" (the main action, the focus on the TV); red is for
+/// state only (live, progress, selection). No translucent materials anywhere.
 enum NxColor {
     static let accent = Color(hex: 0xE5173F)
     static let accentDeep = Color(hex: 0xB30F30)
     static let accentBright = Color(hex: 0xFF4B3A)
     static let ember = Color(hex: 0xFF7A1A)
-    static let ink0 = Color(hex: 0x07070A)
-    static let ink1 = Color(hex: 0x0D0D12)
-    static let ink2 = Color(hex: 0x15151C)
-    static let ink3 = Color(hex: 0x1E1E27)
-    static let ink4 = Color(hex: 0x2A2A35)
-    static let ink5 = Color(hex: 0x3A3A47)
-    static let bg = Color(hex: 0x0D0D12)
-    static let text = Color(hex: 0xF5F5F8)
-    static let textMuted = Color(hex: 0xB8B8C4)
-    static let textDim = Color(hex: 0x8A8A99)
-    static let success = Color(hex: 0x2BD67B)
+    static let ink0 = Color(hex: 0x000000)
+    static let ink1 = Color(hex: 0x0B0B0B)
+    static let ink2 = Color(hex: 0x161616)
+    static let ink3 = Color(hex: 0x222222)
+    static let ink4 = Color(hex: 0x2E2E2E)
+    static let ink5 = Color(hex: 0x404040)
+    static let bg = Color(hex: 0x000000)
+    static let text = Color(hex: 0xFFFFFF)
+    static let textMuted = Color(hex: 0xB8B8B8)
+    static let textDim = Color(hex: 0x808080)
+    static let success = Color(hex: 0x46D369)
     static let warning = Color(hex: 0xFFB020)
     static let gold = Color(hex: 0xFFC94D)
     static let kids = Color(hex: 0x3DA9FC)
     static let hairline = Color.white.opacity(0.12)
-    static let glass = Color.white.opacity(0.08)
+    /// Fill of a secondary button / chip at rest.
+    static let button = Color(hex: 0x6D6D6E, alpha: 0.42)
     static let track = Color.white.opacity(0.28)
-    /// Text on rows that the Apple TV focus turns white: there the system picks the colour.
-    #if os(tvOS)
-    static let rowText = Color.primary
-    static let rowSub = Color.secondary
-    #else
-    static let rowText = text
-    static let rowSub = textDim
-    #endif
     static let brand = LinearGradient(colors: [accent, accentBright, ember], startPoint: .topLeading, endPoint: .bottomTrailing)
-    /// Left-to-right scrim that keeps the hero text readable over any artwork.
-    static let heroScrim = LinearGradient(stops: [.init(color: ink1, location: 0), .init(color: ink1.opacity(0.94), location: 0.28), .init(color: ink1.opacity(0.62), location: 0.48), .init(color: ink1.opacity(0.12), location: 0.70), .init(color: .clear, location: 1)], startPoint: .leading, endPoint: .trailing)
-    static let heroFade = LinearGradient(stops: [.init(color: .clear, location: 0.40), .init(color: ink1.opacity(0.85), location: 0.82), .init(color: ink1, location: 1)], startPoint: .top, endPoint: .bottom)
+    /// Left-to-right scrim that keeps text readable over artwork on the TV.
+    static let heroScrim = LinearGradient(stops: [.init(color: bg, location: 0), .init(color: bg.opacity(0.92), location: 0.30), .init(color: bg.opacity(0.55), location: 0.52), .init(color: bg.opacity(0.10), location: 0.74), .init(color: .clear, location: 1)], startPoint: .leading, endPoint: .trailing)
+    static let heroFade = LinearGradient(stops: [.init(color: .clear, location: 0.35), .init(color: bg.opacity(0.80), location: 0.80), .init(color: bg, location: 1)], startPoint: .top, endPoint: .bottom)
     static let cardFade = LinearGradient(stops: [.init(color: .clear, location: 0.30), .init(color: .black.opacity(0.55), location: 0.62), .init(color: .black.opacity(0.92), location: 1)], startPoint: .top, endPoint: .bottom)
+    static let topFade = LinearGradient(colors: [.black.opacity(0.75), .black.opacity(0.35), .clear], startPoint: .top, endPoint: .bottom)
 }
 
 /// The two brand typefaces (variable fonts shipped with the app): Sora for display, Manrope for everything else.
@@ -58,11 +53,11 @@ enum NxFont {
         switch w { case .regular, .medium: name = "Sora-Regular"; case .semibold: name = "Sora-Regular_SemiBold"; case .bold: name = "Sora-Regular_Bold"; case .heavy: name = "Sora-Regular_ExtraBold" }
         return Font.custom(name, fixedSize: size * Metrics.type)
     }
-    static var hero: Font { display(34, .heavy) }
-    static var titleXL: Font { display(28, .bold) }
-    static var titleL: Font { display(22, .bold) }
+    static var hero: Font { display(30, .heavy) }
+    static var titleXL: Font { display(26, .bold) }
+    static var titleL: Font { display(21, .bold) }
     static var titleM: Font { display(17, .semibold) }
-    static var rowTitle: Font { display(16, .semibold) }
+    static var rowTitle: Font { ui(17, .heavy) }
     static var body: Font { ui(15) }
     static var bodyStrong: Font { ui(15, .semibold) }
     static var button: Font { ui(15, .bold) }
@@ -78,63 +73,76 @@ enum Metrics {
     static let tv = true
     static let type: CGFloat = 1.9
     static let unit: CGFloat = 2.0
-    static let gutter: CGFloat = 80
-    static let showCardW: CGFloat = 420
-    static let channelCardW: CGFloat = 340
-    static let posterW: CGFloat = 250
-    static let rowGap: CGFloat = 40
-    static let cardGap: CGFloat = 36
-    static let radius: CGFloat = 20
+    static let gutter: CGFloat = 60
+    static let showCardW: CGFloat = 400
+    static let channelCardW: CGFloat = 330
+    static let posterW: CGFloat = 224
+    static let rowGap: CGFloat = 34
+    static let cardGap: CGFloat = 24
+    static let radius: CGFloat = 10
+    /// Room the collapsed side menu takes on the left of every page.
+    static let rail: CGFloat = 120
     #else
     static let tv = false
     static let type: CGFloat = 1.0
     static let unit: CGFloat = 1.0
-    static let gutter: CGFloat = 16
-    static let showCardW: CGFloat = 250
-    static let channelCardW: CGFloat = 190
-    static let posterW: CGFloat = 122
-    static let rowGap: CGFloat = 26
-    static let cardGap: CGFloat = 12
-    static let radius: CGFloat = 14
+    static let gutter: CGFloat = 14
+    static let showCardW: CGFloat = 236
+    static let channelCardW: CGFloat = 168
+    static let posterW: CGFloat = 112
+    static let rowGap: CGFloat = 24
+    static let cardGap: CGFloat = 8
+    static let radius: CGFloat = 6
+    static let rail: CGFloat = 0
     #endif
     static func u(_ v: CGFloat) -> CGFloat { v * unit }
     static var isPad: Bool { UIDevice.current.userInterfaceIdiom == .pad }
+    /// Height of the phone's bottom bar (without the home indicator).
+    static let tabBar: CGFloat = 54
 }
 
-// ---------------------------------------------------------------------------------------------------------------- glass
+// ---------------------------------------------------------------------------------------------------------------- basics
 
 extension View {
-    /// A Liquid Glass surface in the given shape (panels, chips, bars).
-    func nxGlass<S: Shape>(_ shape: S, tint: Color? = nil, interactive: Bool = false) -> some View {
-        glassEffect(Glass.regular.tint(tint).interactive(interactive), in: shape)
-    }
-    func nxGlassPanel(radius: CGFloat = Metrics.radius + 6) -> some View {
-        glassEffect(Glass.regular, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-    }
-    /// Page title: in the navigation bar on iPhone; the Apple TV already names the section in its sidebar.
-    @ViewBuilder func nxTitle(_ title: String) -> some View {
-        #if os(iOS)
-        navigationTitle(title)
-        #else
-        self
-        #endif
-    }
     /// The page colour behind a screen.
     func nxPage() -> some View { background(NxColor.bg.ignoresSafeArea()) }
-    /// Hides the system list / form background so the page colour shows (lists are already clear on Apple TV).
-    @ViewBuilder func nxClearList() -> some View {
-        #if os(iOS)
-        scrollContentBackground(.hidden)
-        #else
-        self
-        #endif
-    }
     @ViewBuilder func `if`<T: View>(_ condition: Bool, _ transform: (Self) -> T) -> some View {
         if condition { transform(self) } else { self }
     }
+    /// A dark panel with a hairline (dialogs, the remote, forms).
+    func nxPanel(radius: CGFloat = Metrics.u(12), fill: Color = NxColor.ink2) -> some View {
+        background(fill, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(NxColor.hairline, lineWidth: 1))
+    }
 }
 
-/// What a button is for. White means "press here": the one main action of a page. Everything else is glass.
+/// Gives a view the focus state of the button around it (Apple TV). On a phone it is always false.
+struct Focusable<Content: View>: View {
+    @Environment(\.isFocused) private var focused
+    var onFocus: (() -> Void)? = nil
+    @ViewBuilder let content: (Bool) -> Content
+    var body: some View {
+        #if os(tvOS)
+        content(focused).onChange(of: focused) { _, f in if f { onFocus?() } }
+        #else
+        content(false)
+        #endif
+    }
+}
+
+/// Every button of the app goes through this: no system chrome, a soft press on touch.
+struct NxPlainStyle: ButtonStyle {
+    var scale: CGFloat = 0.97
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? scale : 1)
+            .opacity(configuration.isPressed ? 0.8 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+/// What a button is for. White means "press here": the one main action of a page. On the TV white is the focus, so
+/// every button rests grey and turns white when the remote is on it.
 enum NxButtonKind { case primary, secondary, quiet, danger }
 
 struct NxButton: View {
@@ -143,78 +151,95 @@ struct NxButton: View {
     var kind: NxButtonKind = .secondary
     var wide: Bool = false
     let action: () -> Void
+    @Environment(\.isEnabled) private var enabled
 
     init(_ title: String, icon: String? = nil, kind: NxButtonKind = .secondary, wide: Bool = false, action: @escaping () -> Void) {
         self.title = title; self.icon = icon; self.kind = kind; self.wide = wide; self.action = action
     }
 
-    private var label: some View {
-        HStack(spacing: Metrics.u(8)) {
-            if let i = icon { Image(systemName: i).font(.system(size: 15 * Metrics.type, weight: .bold)) }
-            Text(title).font(NxFont.button).lineLimit(1)
-        }
-        #if os(tvOS)
-        .fixedSize()
-        #endif
-        .frame(maxWidth: wide ? .infinity : nil)
-        #if os(iOS)
-        .padding(.horizontal, 6).padding(.vertical, 5)
-        #endif
-    }
-
     var body: some View {
-        #if os(tvOS)
-        // on the TV the focus is what turns a button white: at rest every button is glass
-        Button(action: action) { label }.buttonStyle(.glass)
-        #else
-        switch kind {
-        case .primary: Button(action: action) { label.foregroundStyle(NxColor.ink0) }.buttonStyle(.glassProminent).tint(.white)
-        case .danger: Button(role: .destructive, action: action) { label }.buttonStyle(.glass)
-        case .secondary, .quiet: Button(action: action) { label.foregroundStyle(NxColor.text) }.buttonStyle(.glass)
+        Button(action: action) {
+            Focusable { focused in
+                let white = Metrics.tv ? focused : kind == .primary
+                HStack(spacing: Metrics.u(7)) {
+                    if let i = icon { Image(systemName: i).font(.system(size: 15 * Metrics.type, weight: .bold)) }
+                    Text(title).font(NxFont.button).lineLimit(1)
+                }
+                .foregroundStyle(white ? Color.black : (kind == .danger ? NxColor.accentBright : Color.white))
+                .fixedSize()
+                .padding(.horizontal, Metrics.u(18))
+                .frame(maxWidth: wide ? .infinity : nil)
+                .frame(height: Metrics.u(Metrics.tv ? 36 : 42))
+                .background(white ? Color.white : (kind == .quiet ? Color.clear : NxColor.button), in: RoundedRectangle(cornerRadius: Metrics.u(4), style: .continuous))
+                .scaleEffect(focused ? 1.06 : 1)
+                .animation(.easeOut(duration: 0.15), value: focused)
+            }
         }
-        #endif
+        .buttonStyle(NxPlainStyle())
+        .opacity(enabled ? 1 : 0.4)
     }
 }
 
-/// Round glass button with a symbol (back, favourite, list, options).
+/// Round button with a symbol, over video or artwork (close, AirPlay, options).
 struct NxIconButton: View {
     let icon: String
     var label: String = ""
     var active: Bool = false
-    var size: CGFloat = 44
+    var size: CGFloat = 40
+    var plain: Bool = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: size * 0.42 * Metrics.unit, weight: .semibold))
-                #if os(iOS)
-                .foregroundStyle(active ? NxColor.accent : NxColor.text)
-                .frame(width: Metrics.u(size), height: Metrics.u(size))
-                #else
-                .frame(width: Metrics.u(size) * 0.62, height: Metrics.u(size) * 0.62)
-                #endif
+            Focusable { focused in
+                Image(systemName: icon)
+                    .font(.system(size: size * (plain ? 0.56 : 0.44) * Metrics.unit, weight: .semibold))
+                    .foregroundStyle(focused ? Color.black : (active ? NxColor.accent : Color.white))
+                    .frame(width: Metrics.u(size), height: Metrics.u(size))
+                    .background(focused ? Color.white : (plain ? Color.clear : Color.black.opacity(0.45)), in: Circle())
+                    .scaleEffect(focused ? 1.1 : 1)
+                    .animation(.easeOut(duration: 0.15), value: focused)
+                    .contentShape(Circle())
+            }
         }
-        #if os(tvOS)
-        .buttonStyle(.glass)
-        #else
-        .buttonStyle(.plain)
-        .glassEffect(Glass.regular.interactive(), in: Circle())
-        #endif
+        .buttonStyle(NxPlainStyle(scale: 0.9))
         .accessibilityLabel(label)
+    }
+}
+
+/// Symbol with its name under it: the secondary actions of a title (La mia lista, Mi piace, Scarica).
+struct NxIconAction: View {
+    let icon: String
+    let label: String
+    var active: Bool = false
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Focusable { focused in
+                VStack(spacing: Metrics.u(5)) {
+                    Image(systemName: icon).font(.system(size: 21 * Metrics.unit, weight: .regular)).frame(height: Metrics.u(26))
+                    Text(label).font(NxFont.ui(11, .medium)).lineLimit(1)
+                }
+                .foregroundStyle(focused ? Color.black : (active ? Color.white : NxColor.textMuted))
+                .frame(minWidth: Metrics.u(64))
+                .padding(.vertical, Metrics.u(6)).padding(.horizontal, Metrics.u(6))
+                .background(focused ? Color.white : Color.clear, in: RoundedRectangle(cornerRadius: Metrics.u(6), style: .continuous))
+            }
+        }
+        .buttonStyle(NxPlainStyle(scale: 0.92))
     }
 }
 
 /// Small state label: DIRETTA (red), PRIMA TV (gold), neutral kinds.
 struct NxTag: View {
     let text: String
-    var color: Color = Color.white.opacity(0.16)
+    var color: Color = Color.white.opacity(0.18)
     var fg: Color = .white
     var body: some View {
         Text(text.uppercased())
-            .font(NxFont.label).tracking(0.6).foregroundStyle(fg).lineLimit(1)
-            .padding(.horizontal, Metrics.u(7)).padding(.vertical, Metrics.u(3))
-            .background(color, in: RoundedRectangle(cornerRadius: Metrics.u(5), style: .continuous))
+            .font(NxFont.label).tracking(0.5).foregroundStyle(fg).lineLimit(1)
+            .padding(.horizontal, Metrics.u(6)).padding(.vertical, Metrics.u(2.5))
+            .background(color, in: RoundedRectangle(cornerRadius: Metrics.u(3), style: .continuous))
     }
 }
 
@@ -224,8 +249,8 @@ struct QualityBadge: View {
         let q = quality == "UHD" ? "4K" : quality
         if !q.isEmpty && q != "?" {
             Text(q).font(NxFont.label).foregroundStyle(NxColor.textMuted)
-                .padding(.horizontal, Metrics.u(6)).padding(.vertical, Metrics.u(2))
-                .overlay(RoundedRectangle(cornerRadius: Metrics.u(4)).stroke(NxColor.textDim, lineWidth: 1))
+                .padding(.horizontal, Metrics.u(5)).padding(.vertical, Metrics.u(1.5))
+                .overlay(RoundedRectangle(cornerRadius: Metrics.u(3)).stroke(NxColor.textDim, lineWidth: 1))
         }
     }
 }
@@ -236,38 +261,41 @@ struct NxProgressBar: View {
     var body: some View {
         GeometryReader { g in
             ZStack(alignment: .leading) {
-                Capsule().fill(NxColor.track)
-                Capsule().fill(NxColor.accent).frame(width: max(0, min(1, value)) * g.size.width)
+                Rectangle().fill(NxColor.track)
+                Rectangle().fill(NxColor.accent).frame(width: max(0, min(1, value)) * g.size.width)
             }
         }
         .frame(height: Metrics.u(height))
+        .clipShape(Capsule())
     }
 }
 
-/// Selectable chip (genres, days, seasons).
+/// Selectable pill (genres, days, seasons): an outline at rest, white when chosen (or under the TV focus).
 struct NxChip: View {
     let title: String
     var icon: String? = nil
+    var trailing: String? = nil
     let selected: Bool
     let action: () -> Void
     var body: some View {
         Button(action: action) {
-            HStack(spacing: Metrics.u(6)) {
-                if let i = icon { Image(systemName: i).font(.system(size: 12 * Metrics.type, weight: .semibold)) }
-                Text(title).font(NxFont.ui(13, selected ? .bold : .medium)).lineLimit(1)
+            Focusable { focused in
+                let white = focused || (selected && !Metrics.tv)
+                HStack(spacing: Metrics.u(5)) {
+                    if let i = icon { Image(systemName: i).font(.system(size: 11 * Metrics.type, weight: .bold)) }
+                    Text(title).font(NxFont.ui(13, selected ? .bold : .semibold)).lineLimit(1)
+                    if let t = trailing { Image(systemName: t).font(.system(size: 9 * Metrics.type, weight: .heavy)) }
+                }
+                .foregroundStyle(white ? Color.black : Color.white)
+                .padding(.horizontal, Metrics.u(13))
+                .frame(height: Metrics.u(32))
+                .background(white ? Color.white : (selected ? Color.white.opacity(0.24) : Color.clear), in: Capsule())
+                .overlay(Capsule().stroke(Color.white.opacity(white || selected ? 0 : 0.42), lineWidth: 1))
+                .scaleEffect(focused ? 1.06 : 1)
+                .animation(.easeOut(duration: 0.15), value: focused)
             }
-            #if os(iOS)
-            .foregroundStyle(selected ? Color.white : NxColor.textMuted)
-            .padding(.horizontal, Metrics.u(14)).padding(.vertical, Metrics.u(8))
-            #endif
         }
-        #if os(tvOS)
-        .buttonStyle(.glass)
-        .tint(selected ? NxColor.accent : nil)
-        #else
-        .buttonStyle(.plain)
-        .glassEffect(selected ? Glass.regular.tint(NxColor.accent).interactive() : Glass.regular.interactive(), in: Capsule())
-        #endif
+        .buttonStyle(NxPlainStyle())
     }
 }
 
@@ -277,7 +305,7 @@ struct SectionHeader: View {
     var sub: String? = nil
     var tag: String? = nil
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: Metrics.u(10)) {
+        HStack(alignment: .firstTextBaseline, spacing: Metrics.u(8)) {
             Text(title).font(NxFont.rowTitle).foregroundStyle(NxColor.text).lineLimit(1)
             if let t = tag { NxTag(text: t) }
             if let s = sub { Text(s).font(NxFont.caption).foregroundStyle(NxColor.textDim).lineLimit(1) }
@@ -307,7 +335,7 @@ struct StateMessage: View {
     }
 }
 
-/// The brand mark as the loading indicator: the two waves light up in turn ("Segnale").
+/// The brand mark as the loading indicator: it breathes.
 struct BrandLoader: View {
     var size: CGFloat = 56
     var label: String? = nil
@@ -320,6 +348,46 @@ struct BrandLoader: View {
                 .onAppear { withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { phase = 1 } }
             if let l = label { Text(l).font(NxFont.meta).foregroundStyle(NxColor.textMuted).multilineTextAlignment(.center) }
         }
+    }
+}
+
+/// A thin ring that turns: waiting for the network inside a row or a button.
+struct NxSpinner: View {
+    var size: CGFloat = 18
+    @State private var turn = false
+    var body: some View {
+        Circle().trim(from: 0.1, to: 0.85).stroke(Color.white.opacity(0.85), style: StrokeStyle(lineWidth: Metrics.u(2.2), lineCap: .round))
+            .frame(width: Metrics.u(size), height: Metrics.u(size))
+            .rotationEffect(.degrees(turn ? 360 : 0))
+            .onAppear { withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) { turn = true } }
+    }
+}
+
+/// Our own on / off switch.
+struct NxSwitch: View {
+    let on: Bool
+    var body: some View {
+        ZStack(alignment: on ? .trailing : .leading) {
+            Capsule().fill(on ? NxColor.accent : NxColor.ink5).frame(width: Metrics.u(46), height: Metrics.u(27))
+            Circle().fill(Color.white).frame(width: Metrics.u(22), height: Metrics.u(22)).padding(.horizontal, Metrics.u(2.5))
+        }
+        .animation(.easeOut(duration: 0.18), value: on)
+    }
+}
+
+/// A text field in our own frame (the keyboard is the system's).
+struct NxField<Content: View>: View {
+    var icon: String? = nil
+    @ViewBuilder var content: () -> Content
+    var body: some View {
+        HStack(spacing: Metrics.u(10)) {
+            if let i = icon { Image(systemName: i).font(.system(size: 15 * Metrics.unit, weight: .semibold)).foregroundStyle(NxColor.textDim) }
+            content().font(NxFont.ui(16, .medium)).foregroundStyle(NxColor.text).tint(.white)
+        }
+        #if os(iOS)
+        .padding(.horizontal, 14).frame(height: 50)
+        .background(NxColor.ink3, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+        #endif
     }
 }
 

@@ -8,8 +8,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.9.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "2"
     ENABLE_USER_SCRIPT_SANDBOXING: "NO"
     CODE_SIGN_STYLE: Manual
     CODE_SIGN_IDENTITY: "-"
@@ -47,7 +47,14 @@ targets:
         UILaunchScreen:
           UIColorName: LaunchBackground
         UIApplicationSceneManifest:
-          UIApplicationSupportsMultipleScenes: false
+          UIApplicationSupportsMultipleScenes: true
+          UISceneConfigurations:
+            CPTemplateApplicationSceneSessionRoleApplication:
+              - UISceneClassName: CPTemplateApplicationScene
+                UISceneConfigurationName: CarPlay
+                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).CarSceneDelegate
+        INIntentsSupported: [INPlayMediaIntent]
+        NSSiriUsageDescription: Con Siri puoi chiedere a NexStream di riprodurre un canale, un film o una serie, anche dall'auto.
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         UIBackgroundModes: [audio]

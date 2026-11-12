@@ -203,7 +203,7 @@ enum Transfer {
         switch r.status {
         case 401: return "Codice sbagliato: controlla quello sull'altro dispositivo."
         case 410: return "Il codice è scaduto: riapri la schermata sull'altro dispositivo."
-        case 0: return "Non riesco a raggiungere l'altro dispositivo. Siete sulla stessa rete? Alcune VPN bloccano la rete di casa."
+        case 0: return r.problem ?? "Non riesco a raggiungere l'altro dispositivo. Siete sulla stessa rete? Alcune VPN bloccano la rete di casa."
         default: return r.error ?? "L'altro dispositivo non ha accettato i dati (\(r.status))."
         }
     }
@@ -236,14 +236,14 @@ struct LanLinkPanel: View {
             }
         }
         .padding(Metrics.u(22))
-        .nxGlassPanel()
+        .nxPanel()
     }
 
     @ViewBuilder private var statusLine: some View {
         switch link.status {
         case .waiting: Label("In attesa…", systemImage: "hourglass").font(NxFont.caption).foregroundStyle(NxColor.textDim)
         case .opened: Label("Pagina aperta sul telefono", systemImage: "iphone").font(NxFont.caption).foregroundStyle(NxColor.success)
-        case .working: HStack(spacing: 8) { ProgressView(); Text("Un momento…").font(NxFont.caption).foregroundStyle(NxColor.textMuted) }
+        case .working: HStack(spacing: 8) { NxSpinner(); Text("Un momento…").font(NxFont.caption).foregroundStyle(NxColor.textMuted) }
         case .done(let m): Label(m, systemImage: "checkmark.circle.fill").font(NxFont.caption).foregroundStyle(NxColor.success)
         case .failed(let m): Label(m, systemImage: "exclamationmark.triangle.fill").font(NxFont.caption).foregroundStyle(NxColor.accentBright)
         case .expired: Label("Codice scaduto: riapri questa schermata.", systemImage: "clock").font(NxFont.caption).foregroundStyle(NxColor.warning)
@@ -269,15 +269,17 @@ struct TransferView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.u(18)) {
-                Picker("", selection: $mode) { Text("Ricevi qui").tag(0); Text("Invia da qui").tag(1) }.pickerStyle(.segmented).frame(maxWidth: Metrics.u(420))
+                HStack(spacing: Metrics.u(8)) {
+                    NxChip(title: "Ricevi qui", icon: "arrow.down", selected: mode == 0) { mode = 0 }
+                    NxChip(title: "Invia da qui", icon: "arrow.up", selected: mode == 1) { mode = 1 }
+                }
                 if mode == 0 { receive } else { send }
             }
             .padding(Metrics.u(20))
             .frame(maxWidth: Metrics.u(760), alignment: .leading)
             .frame(maxWidth: .infinity)
         }
-        .nxPage()
-        .nxTitle("Profili tra dispositivi")
+        .nxScreen("Profili tra dispositivi")
         .onAppear { openLink(); finder.start(type: LanLink.service) { devices = $0.filter { $0.name != Lan.deviceName() || true } } }
         .onDisappear { link?.close(); finder.stop() }
     }
@@ -311,18 +313,22 @@ struct TransferView: View {
         }
         VStack(alignment: .leading, spacing: Metrics.u(6)) {
             Text("OPPURE L'INDIRIZZO").font(NxFont.label).tracking(1).foregroundStyle(NxColor.textDim)
-            TextField("192.168.1.50:8765", text: $manual).autocorrectionDisabled().textInputAutocapitalization(.never)
-                #if os(iOS)
-                .keyboardType(.numbersAndPunctuation).textFieldStyle(.roundedBorder)
-                #endif
-                .onChange(of: manual) { _, v in if !v.isEmpty { target = nil } }
+            NxField {
+                TextField("", text: $manual, prompt: Text("192.168.1.50:8765").foregroundColor(NxColor.textDim)).autocorrectionDisabled().textInputAutocapitalization(.never)
+                    #if os(iOS)
+                    .keyboardType(.numbersAndPunctuation)
+                    #endif
+                    .onChange(of: manual) { _, v in if !v.isEmpty { target = nil } }
+            }
         }
         VStack(alignment: .leading, spacing: Metrics.u(6)) {
             Text("CODICE DI 6 CIFRE").font(NxFont.label).tracking(1).foregroundStyle(NxColor.textDim)
-            TextField("000 000", text: $code)
-                #if os(iOS)
-                .keyboardType(.numberPad).textFieldStyle(.roundedBorder)
-                #endif
+            NxField {
+                TextField("", text: $code, prompt: Text("000 000").foregroundColor(NxColor.textDim))
+                    #if os(iOS)
+                    .keyboardType(.numberPad)
+                    #endif
+            }
         }
         if let r = result { Label(r, systemImage: "checkmark.circle.fill").font(NxFont.meta).foregroundStyle(NxColor.success) }
         if let f = failure { Label(f, systemImage: "exclamationmark.triangle.fill").font(NxFont.meta).foregroundStyle(NxColor.accentBright) }

@@ -180,10 +180,14 @@ enum Lan {
     struct Reply {
         var status: Int
         var text: String
+        /// When nothing came back (status 0) for a reason the person can fix, the reason in words.
+        var problem: String? = nil
         var json: J { J.parse(text) }
         var ok: Bool { status >= 200 && status < 300 && json["ok"].boolOrNil != false }
         var error: String? { json["error"].stringOrNil }
     }
+
+    static let localNetworkDenied = "NexStream non ha il permesso “Rete locale”: attivalo in Impostazioni, Privacy e sicurezza, Rete locale, poi riprova."
 
     /// "192.168.1.50" / "192.168.1.50:8765" / "http://…" -> host and port.
     static func endpoint(_ address: String, defaultPort: UInt16) -> NWEndpoint? {
@@ -195,29 +199,71 @@ enum Lan {
         return .hostPort(host: NWEndpoint.Host(String(host)), port: p)
     }
 
-    /// One HTTP request to a device of the home network (never through the VPN filter: it stays on the LAN).
+    /// TCP towards a device of the home network. `bound`: IPv4 only (the Android app refuses a public IPv6 source
+    /// address, and the stored addresses are IPv4) and never through a VPN tunnel (utun/ipsec are `.other`) nor the
+    /// mobile network, so a VPN that takes all the traffic does not swallow what is meant for the TV next door.
+    static func parameters(bound: Bool) -> NWParameters {
+        let tcp = NWProtocolTCP.Options()
+        tcp.connectionTimeout = 4
+        tcp.noDelay = true
+        let p = NWParameters(tls: nil, tcp: tcp)
+        p.includePeerToPeer = false
+        if bound {
+            p.prohibitedInterfaceTypes = [.cellular, .other]
+            if let ip = p.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options { ip.version = .v4 }
+        } else {
+            p.prohibitedInterfaceTypes = [.cellular]
+        }
+        return p
+    }
+
+    /// One HTTP request to a device of the home network. First on the home network only (see `parameters`); when that
+    /// connection cannot even be opened, once more the way the system prefers. A request that left is never sent twice.
     static func call(_ endpoint: NWEndpoint, _ path: String, headers: [String: String] = [:], body: String? = nil, timeout: Double = 8) async -> Reply {
-        await withCheckedContinuation { (cont: CheckedContinuation<Reply, Never>) in
-            let params = NWParameters.tcp
-            params.prohibitedInterfaceTypes = [.cellular]
-            let c = NWConnection(to: endpoint, using: params)
+        let window = min(3, timeout / 2)
+        let first = await attempt(endpoint, path, headers: headers, body: body, bound: true, connect: window, timeout: timeout)
+        if first.1 || first.0.problem != nil { return first.0 }
+        NxLog.i("NxLan", "\(path): no connection on the home network only, trying the default route")
+        let rest = max(1, timeout - window)
+        return await attempt(endpoint, path, headers: headers, body: body, bound: false, connect: rest, timeout: rest).0
+    }
+
+    /// The reply, and whether the connection opened (so the request was sent).
+    private static func attempt(_ endpoint: NWEndpoint, _ path: String, headers: [String: String], body: String?, bound: Bool, connect: Double, timeout: Double) async -> (Reply, Bool) {
+        await withCheckedContinuation { (cont: CheckedContinuation<(Reply, Bool), Never>) in
+            let c = NWConnection(to: endpoint, using: parameters(bound: bound))
             let q = DispatchQueue(label: "nx.lan.client")
             var finished = false
-            func finish(_ r: Reply) { if !finished { finished = true; c.cancel(); cont.resume(returning: r) } }
+            var opened = false
+            func finish(_ r: Reply) { if !finished { finished = true; c.stateUpdateHandler = nil; c.cancel(); cont.resume(returning: (r, opened)) } }
             var received = Data()
+            /// The reply once the head and the whole body (Content-Length) are here; with `closed`, whatever came.
+            func parsed(closed: Bool) -> Reply? {
+                guard let end = received.range(of: Data([13, 10, 13, 10])), let head = String(data: received[received.startIndex..<end.lowerBound], encoding: .utf8) else { return nil }
+                let lines = head.components(separatedBy: "\r\n")
+                var length: Int? = nil
+                for l in lines.dropFirst() where l.lowercased().hasPrefix("content-length:") { length = Int(l.dropFirst(15).trimmingCharacters(in: .whitespaces)) }
+                var bodyData = Data(received[end.upperBound...])
+                if !closed {
+                    guard let n = length, bodyData.count >= n else { return nil }
+                }
+                if let n = length, n >= 0, bodyData.count > n { bodyData = Data(bodyData.prefix(n)) }
+                let status = Int((lines.first ?? "").split(separator: " ")[safe: 1] ?? "") ?? 0
+                return Reply(status: status, text: String(data: bodyData, encoding: .utf8) ?? "")
+            }
             func readAll() {
                 c.receive(minimumIncompleteLength: 1, maximumLength: 256 * 1024) { data, _, done, err in
                     if let d = data { received.append(d) }
-                    if done || err != nil {
-                        guard let end = received.range(of: Data([13, 10, 13, 10])), let head = String(data: received[received.startIndex..<end.lowerBound], encoding: .utf8) else { finish(Reply(status: 0, text: "")); return }
-                        let status = Int(head.split(separator: " ")[safe: 1] ?? "") ?? 0
-                        finish(Reply(status: status, text: String(data: received[end.upperBound...], encoding: .utf8) ?? ""))
-                    } else { readAll() }
+                    if let r = parsed(closed: false) { finish(r) }
+                    else if done || err != nil { finish(parsed(closed: true) ?? Reply(status: 0, text: "")) }
+                    else { readAll() }
                 }
             }
             c.stateUpdateHandler = { st in
                 switch st {
                 case .ready:
+                    if opened { return }
+                    opened = true
                     let payload = Data((body ?? "").utf8)
                     var head = "\(body == nil ? "GET" : "POST") \(path) HTTP/1.1\r\nHost: nexstream.local\r\nConnection: close\r\nAccept: application/json\r\n"
                     if body != nil { head += "Content-Type: application/json\r\nContent-Length: \(payload.count)\r\n" }
@@ -226,12 +272,19 @@ enum Lan {
                     var out = Data(head.utf8); out.append(payload)
                     c.send(content: out, completion: .contentProcessed { _ in })
                     readAll()
-                case .failed, .cancelled: finish(Reply(status: 0, text: ""))
-                case .waiting: finish(Reply(status: 0, text: ""))
+                case .waiting(let err):
+                    // not an answer yet: the path may still come up (permission being asked, Wi-Fi waking up)
+                    if c.currentPath?.unsatisfiedReason == .localNetworkDenied { finish(Reply(status: 0, text: "", problem: Lan.localNetworkDenied)) }
+                    else { NxLog.i("NxLan", "\(path) waiting (\(bound ? "home network" : "default")): \(err)") }
+                case .failed(let err):
+                    NxLog.i("NxLan", "\(path) failed (\(bound ? "home network" : "default")): \(err)")
+                    finish(Reply(status: 0, text: ""))
+                case .cancelled: finish(Reply(status: 0, text: ""))
                 default: break
                 }
             }
             c.start(queue: q)
+            q.asyncAfter(deadline: .now() + connect) { if !opened { finish(Reply(status: 0, text: "")) } }
             q.asyncAfter(deadline: .now() + timeout) { finish(Reply(status: 0, text: "")) }
         }
     }
@@ -244,22 +297,47 @@ enum Lan {
         var label: String { name.substringAfter("· ", orElse: name) }
     }
 
-    /// Looks for a Bonjour service type on the home network, calling back with the list as it changes.
+    /// Looks for a Bonjour service type on the home network, calling back with the list as it changes. `onProblem`
+    /// gets why nothing can be found (the "Rete locale" permission is off), or nil when the search is running.
     final class Finder {
         private var browser: NWBrowser?
-        func start(type: String, onChange: @escaping ([Device]) -> Void) {
+        private var generation = 0
+        func start(type: String, onProblem: ((String?) -> Void)? = nil, onChange: @escaping ([Device]) -> Void) {
+            browser?.cancel()
+            generation += 1
+            let gen = generation
             let params = NWParameters()
             params.includePeerToPeer = false
+            params.prohibitedInterfaceTypes = [.cellular]
             let b = NWBrowser(for: .bonjour(type: type, domain: nil), using: params)
             b.browseResultsChangedHandler = { results, _ in
                 var out = [Device]()
-                for r in results { if case .service(let name, _, _, _) = r.endpoint, name != Lan.deviceName() || true { out.append(Device(name: name, endpoint: r.endpoint)) } }
+                var seen = Set<String>()
+                // the same service shows once per interface: one row each
+                for r in results { if case .service(let name, _, _, _) = r.endpoint, seen.insert(name).inserted { out.append(Device(name: name, endpoint: r.endpoint)) } }
                 DispatchQueue.main.async { onChange(out.sorted { $0.name < $1.name }) }
+            }
+            b.stateUpdateHandler = { [weak self] st in
+                switch st {
+                case .ready: DispatchQueue.main.async { onProblem?(nil) }
+                case .waiting(let err):
+                    NxLog.i("NxLan", "browse \(type) waiting: \(err)")
+                    // kDNSServiceErr_PolicyDenied: the person said no to "Rete locale"
+                    if case .dns(let code) = err, Int(code) == -65570 { DispatchQueue.main.async { onProblem?(Lan.localNetworkDenied) } }
+                case .failed(let err):
+                    NxLog.i("NxLan", "browse \(type) failed: \(err)")
+                    // the network changed under the search: start again
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        guard let self = self, self.generation == gen, self.browser != nil else { return }
+                        self.start(type: type, onProblem: onProblem, onChange: onChange)
+                    }
+                default: break
+                }
             }
             b.start(queue: DispatchQueue(label: "nx.lan.finder"))
             browser = b
         }
-        func stop() { browser?.cancel(); browser = nil }
+        func stop() { generation += 1; browser?.cancel(); browser = nil }
         deinit { browser?.cancel() }
     }
 }

@@ -1,206 +1,284 @@
 import SwiftUI
 
-/// The big slide on top of Home, Film, Serie TV and I miei: artwork edge to edge, what it is, and the one thing to do.
+extension HeroItem {
+    var heroTitle: String {
+        switch self {
+        case .live(let s): return s.cardTitle
+        case .vod(let t, _): return t.displayTitle
+        }
+    }
+    var heroLogo: String? {
+        switch self {
+        case .live(let s): return s.logo
+        case .vod(_, let d): return Img.tmdb(d?.logoPath, "w500")
+        }
+    }
+    var heroBackdrop: String? {
+        switch self {
+        case .live(let s): return Img.hero(s.image)
+        case .vod(let t, let d): return Img.tmdb(d?.bestBackdrop ?? t.backdropPath, "w1280")
+        }
+    }
+    var heroOverview: String? {
+        switch self {
+        case .live(let s): return s.overview
+        case .vod(let t, let d): return (d?.overview ?? t.overview)?.nilIfBlank
+        }
+    }
+    /// The quiet line under the title: year, length, genres — or channel and time for something on TV.
+    var heroMeta: String {
+        switch self {
+        case .live(let s): return [s.channel.name, s.whenLabel(), s.cardLine].compactMap { $0 }.joined(separator: "  ·  ")
+        case .vod(let t, let d):
+            var parts = [String]()
+            if t.year > 0 { parts.append(String(t.year)) }
+            if let d = d {
+                if d.isTv, d.numberOfSeasons > 0 { parts.append(d.numberOfSeasons == 1 ? "1 stagione" : "\(d.numberOfSeasons) stagioni") }
+                else if d.runtimeMin > 0 { parts.append(TimeText.duration(minutes: d.runtimeMin)) }
+                parts += d.genres.prefix(2).map { $0.name }
+            } else { parts.append(t.isTv ? "Serie TV" : "Film") }
+            return parts.joined(separator: "  ·  ")
+        }
+    }
+}
+
+#if os(iOS)
+/// The big card on top of Home, Film, Serie TV: the poster, the title, and the two things to do.
 struct HeroView: View {
     let item: HeroItem
     @EnvironmentObject var app: AppModel
     @EnvironmentObject var store: LiveStore
 
-    #if os(tvOS)
-    static let height: CGFloat = 640
-    #else
-    static var height: CGFloat { Metrics.isPad ? 460 : 430 }
-    #endif
-
-    private var artwork: String? {
+    private var art: String? {
         switch item {
         case .live(let s): return Img.hero(s.image)
-        case .vod(let t, let d): return Img.tmdb(d?.bestBackdrop ?? t.backdropPath, "w1280")
-        }
-    }
-    private var logo: String? {
-        switch item {
-        case .live(let s): return s.logo
-        case .vod(_, let d): return Img.tmdb(d?.logoPath, "w500")
-        }
-    }
-    private var title: String {
-        switch item {
-        case .live(let s): return s.cardTitle
-        case .vod(let t, _): return t.displayTitle
+        case .vod(let t, let d): return Img.tmdb(t.posterPath ?? d?.posterPath, "w780") ?? Img.tmdb(d?.bestBackdrop ?? t.backdropPath, "w1280")
         }
     }
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
+        ZStack(alignment: .bottom) {
             Group {
                 if case .live(let s) = item, s.match != nil, s.meta == nil { MatchArt(match: s.match!) }
-                else { NxImage(url: artwork, maxPixel: Metrics.tv ? 1920 : 1400, alignment: .top) { NxColor.ink2 } }
+                else if case .live(let s) = item, art == nil { ShowingArt(showing: s, hero: true) }
+                else { NxImage(url: art, maxPixel: 1400, alignment: .top) { NxColor.ink2 } }
             }
-            .frame(maxWidth: .infinity).frame(height: HeroView.height).clipped()
-            #if os(tvOS)
-            NxColor.heroScrim
-            #endif
-            NxColor.heroFade
-            VStack(alignment: .leading, spacing: Metrics.u(10)) {
-                overline
-                if let l = logo {
-                    NxImage(url: l, fit: true, maxPixel: 700, alignment: .bottomLeading) { Text(title).font(NxFont.hero).foregroundStyle(.white).lineLimit(2) }
-                        .frame(maxWidth: Metrics.u(250), maxHeight: Metrics.u(84), alignment: .bottomLeading)
-                } else {
-                    Text(title).font(NxFont.hero).foregroundStyle(.white).lineLimit(2).minimumScaleFactor(0.7)
-                }
-                info
-                actions.padding(.top, Metrics.u(4))
+            LinearGradient(stops: [.init(color: .clear, location: 0.42), .init(color: .black.opacity(0.72), location: 0.74), .init(color: .black.opacity(0.96), location: 1)], startPoint: .top, endPoint: .bottom)
+            VStack(spacing: 10) {
+                if case .live(let s) = item { HStack(spacing: 8) { ChannelLogo(channel: s.channel, height: 20); ShowingTags(showing: s, showKind: false) } }
+                if let l = item.heroLogo {
+                    NxImage(url: l, fit: true, maxPixel: 700, alignment: .bottom) { titleText }.frame(maxWidth: 240, maxHeight: 84, alignment: .bottom)
+                } else { titleText }
+                Text(item.heroMeta).font(NxFont.ui(12, .semibold)).foregroundStyle(.white.opacity(0.92)).lineLimit(1)
+                if case .live(let s) = item, let p = s.progress(), s.isLive() { NxProgressBar(value: p).frame(maxWidth: 200) }
+                actions.padding(.top, 2)
             }
-            .padding(.horizontal, Metrics.gutter)
-            .padding(.bottom, Metrics.u(18))
-            .frame(maxWidth: Metrics.tv ? 900 : 560, alignment: .leading)
+            .padding(.horizontal, 14).padding(.bottom, 14)
         }
-        .frame(height: HeroView.height)
-    }
-
-    @ViewBuilder private var overline: some View {
-        switch item {
-        case .live(let s):
-            HStack(spacing: Metrics.u(8)) { ChannelLogo(channel: s.channel, height: 22); ShowingTags(showing: s) }
-        case .vod(let t, _):
-            HStack(spacing: Metrics.u(8)) { NxTag(text: "On demand"); NxTag(text: t.isTv ? "Serie TV" : "Film") }
-        }
-    }
-
-    @ViewBuilder private var info: some View {
-        switch item {
-        case .live(let s):
-            VStack(alignment: .leading, spacing: Metrics.u(4)) {
-                Text([s.whenLabel(), s.cardLine].compactMap { $0 }.joined(separator: "  ·  ")).font(NxFont.meta).foregroundStyle(NxColor.textMuted).lineLimit(1)
-                if let o = s.overview { Text(o).font(NxFont.body).foregroundStyle(NxColor.textMuted).lineLimit(Metrics.tv ? 3 : 2) }
-                if let p = s.progress(), s.isLive() { NxProgressBar(value: p).frame(maxWidth: Metrics.u(220)) }
-            }
-        case .vod(let t, let d):
-            VStack(alignment: .leading, spacing: Metrics.u(4)) {
-                Text(vodMeta(t, d)).font(NxFont.meta).foregroundStyle(NxColor.textMuted).lineLimit(1)
-                if let o = (d?.overview ?? t.overview)?.nilIfBlank { Text(o).font(NxFont.body).foregroundStyle(NxColor.textMuted).lineLimit(Metrics.tv ? 3 : 2) }
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.white.opacity(0.14), lineWidth: 0.5))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            switch item {
+            case .live(let s): app.openShowing(s)
+            case .vod(let t, _): app.openTitle(t)
             }
         }
     }
 
-    private func vodMeta(_ t: TmdbTitle, _ d: TmdbDetails?) -> String {
-        var parts = [String]()
-        if t.year > 0 { parts.append(String(t.year)) }
-        if let d = d {
-            if d.isTv, d.numberOfSeasons > 0 { parts.append(d.numberOfSeasons == 1 ? "1 stagione" : "\(d.numberOfSeasons) stagioni") }
-            else if d.runtimeMin > 0 { parts.append(TimeText.duration(minutes: d.runtimeMin)) }
-            parts += d.genres.prefix(2).map { $0.name }
-        }
-        if t.vote > 0 { parts.append(String(format: "★ %.1f", t.vote)) }
-        return parts.joined(separator: "  ·  ")
+    private var titleText: some View {
+        Text(item.heroTitle).font(NxFont.hero).foregroundStyle(.white).lineLimit(2).minimumScaleFactor(0.6).multilineTextAlignment(.center)
     }
 
     @ViewBuilder private var actions: some View {
-        HStack(spacing: Metrics.u(10)) {
+        HStack(spacing: 10) {
             switch item {
             case .live(let s):
-                if s.isLive() || s.programme == nil {
-                    NxButton("Guarda", icon: "play.fill", kind: .primary) { app.play(s.channel) }
-                } else {
-                    NxButton(store.reminders.contains(s.channel.streamId) ? "Promemoria attivo" : "Avvisami", icon: "bell.fill", kind: .primary) { app.toggleReminder(s) }
-                }
-                NxButton("Dettagli", icon: "info.circle") { app.openShowing(s) }
-                NxIconButton(icon: store.favorites.contains(s.channel.streamId) ? "star.fill" : "star", label: "Preferito", active: store.favorites.contains(s.channel.streamId)) { app.toggleFavorite(s.channel) }
+                let fav = store.favorites.contains(s.channel.streamId)
+                if s.isLive() || s.programme == nil { NxButton("Guarda", icon: "play.fill", kind: .primary, wide: true) { app.play(s.channel) } }
+                else { NxButton(store.reminders.contains(s.channel.streamId) ? "Avviso attivo" : "Avvisami", icon: "bell.fill", kind: .primary, wide: true) { app.toggleReminder(s) } }
+                NxButton(fav ? "Preferito" : "Preferiti", icon: fav ? "checkmark" : "plus", wide: true) { app.toggleFavorite(s.channel) }
             case .vod(let t, let d):
-                NxButton("Riproduci", icon: "play.fill", kind: .primary) { if let d = d { app.playTitle(d) } else { app.playTitle(t) } }
-                NxButton("Dettagli", icon: "info.circle") { app.openTitle(t) }
-                NxIconButton(icon: store.listKeys.contains(t.key) ? "bookmark.fill" : "bookmark", label: "Da guardare", active: store.listKeys.contains(t.key)) { app.toggleList(t) }
+                let inList = store.listKeys.contains(t.key)
+                NxButton("Riproduci", icon: "play.fill", kind: .primary, wide: true) { if let d = d { app.playTitle(d) } else { app.playTitle(t) } }
+                NxButton("La mia lista", icon: inList ? "checkmark" : "plus", wide: true) { app.toggleList(t) }
             }
         }
     }
 }
 
-/// Carousel of hero slides: it turns by itself, a swipe (touch) or the dots change slide.
+/// The hero cards side by side: swipe to see the next one; it also moves on by itself.
 struct HeroCarousel: View {
     let items: [HeroItem]
-    @State private var slide = 0
+    @State private var slide: String? = nil
+    @State private var width: CGFloat = 390
 
     var body: some View {
-        let count = items.count
-        ZStack(alignment: .bottomTrailing) {
-            #if os(tvOS)
-            if count > 0 { HeroView(item: items[slide % count]).id(items[slide % count].id).transition(.opacity) }
-            #else
-            TabView(selection: $slide) {
-                ForEach(Array(items.enumerated()), id: \.element.id) { i, it in HeroView(item: it).tag(i) }
+        let cardW = min(width - 36, 420)
+        VStack(spacing: 8) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 10) {
+                    ForEach(items) { it in HeroView(item: it).frame(width: cardW, height: cardW * 1.36).id(it.id) }
+                }
+                .scrollTargetLayout()
+                .padding(.horizontal, (width - cardW) / 2)
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            #endif
-            if count > 1 {
-                HStack(spacing: Metrics.u(5)) {
-                    ForEach(0..<count, id: \.self) { i in
-                        Capsule().fill(i == slide % count ? Color.white : Color.white.opacity(0.35)).frame(width: Metrics.u(i == slide % count ? 16 : 6), height: Metrics.u(6))
+            .scrollTargetBehavior(.viewAligned)
+            .scrollPosition(id: $slide)
+            if items.count > 1 {
+                HStack(spacing: 5) {
+                    ForEach(items) { it in
+                        let on = (slide ?? items.first?.id) == it.id
+                        Circle().fill(on ? Color.white : Color.white.opacity(0.3)).frame(width: 6, height: 6)
                     }
                 }
-                .padding(.horizontal, Metrics.gutter).padding(.bottom, Metrics.u(14))
-                .animation(.easeOut(duration: 0.25), value: slide)
             }
         }
-        .frame(height: HeroView.height)
-        .task(id: "\(slide)-\(count)") {
-            guard count > 1 else { return }
-            try? await Task.sleep(nanoseconds: 9_000_000_000)
-            if !Task.isCancelled { withAnimation(.easeInOut(duration: 0.5)) { slide = (slide + 1) % count } }
+        .background(GeometryReader { g in Color.clear.onAppear { width = g.size.width }.onChange(of: g.size.width) { _, w in width = w } })
+        .task(id: "\(slide ?? "")-\(items.count)") {
+            guard items.count > 1 else { return }
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            if Task.isCancelled { return }
+            let i = items.firstIndex { $0.id == (slide ?? items.first?.id) } ?? 0
+            withAnimation(.easeInOut(duration: 0.45)) { slide = items[(i + 1) % items.count].id }
         }
-        .onChange(of: count) { _, n in if slide >= n { slide = 0 } }
     }
 }
+#else
+/// Apple TV: the top of a browsing page describes what the remote is on — the artwork on the right, the title and
+/// the plot on the left. With nothing chosen yet it shows the page's own suggestions, one after the other.
+struct Billboard: View {
+    let items: [HeroItem]
+    @ObservedObject private var hub = FocusHub.shared
+    @EnvironmentObject var app: AppModel
+    @State private var slide = 0
+    @State private var details: TmdbDetails? = nil
+    static let height: CGFloat = 470
 
-/// The page shared by Home and I miei: the carousel, then the rows.
-struct HomePage: View {
+    private var item: HeroItem? {
+        if let f = hub.item {
+            if case .vod(let t, nil) = f, let d = details, d.id == t.tmdbId { return .vod(t, d) }
+            return f
+        }
+        return items.isEmpty ? nil : items[slide % items.count]
+    }
+
+    var body: some View {
+        let it = item
+        ZStack(alignment: .topLeading) {
+            if let i = it {
+                Group {
+                    if case .live(let s) = i, s.match != nil, s.meta == nil { MatchArt(match: s.match!) }
+                    else if case .live(let s) = i, i.heroBackdrop == nil { ShowingArt(showing: s, hero: true) }
+                    else { NxImage(url: i.heroBackdrop, maxPixel: 1920, alignment: .top) { NxColor.bg } }
+                }
+                .frame(width: 1240, height: 698)
+                .overlay(NxColor.heroScrim)
+                .overlay(NxColor.heroFade)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .id(i.id)
+                .transition(.opacity)
+                VStack(alignment: .leading, spacing: 14) {
+                    if case .live(let s) = i { HStack(spacing: 12) { ChannelLogo(channel: s.channel, height: 22); ShowingTags(showing: s) } }
+                    if let l = i.heroLogo {
+                        NxImage(url: l, fit: true, maxPixel: 800, alignment: .bottomLeading) { title(i) }.frame(maxWidth: 520, maxHeight: 170, alignment: .bottomLeading)
+                    } else { title(i) }
+                    Text(i.heroMeta).font(NxFont.ui(13, .bold)).foregroundStyle(.white).lineLimit(1)
+                    if let o = i.heroOverview { Text(o).font(NxFont.ui(14, .medium)).foregroundStyle(NxColor.textMuted).lineLimit(3).frame(maxWidth: 780, alignment: .leading) }
+                    if case .live(let s) = i, let p = s.progress(), s.isLive() { NxProgressBar(value: p).frame(width: 380) }
+                }
+                .padding(.leading, Metrics.gutter).padding(.top, 70)
+                .frame(maxWidth: 900, maxHeight: Billboard.height, alignment: .bottomLeading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(height: 698, alignment: .top)
+        .animation(.easeInOut(duration: 0.3), value: it?.id)
+        .task(id: it?.id) {
+            if case .vod(let t, nil)? = hub.item { details = try? await app.core.catalog.details(t.media, t.tmdbId) }
+        }
+        .task(id: "\(slide)-\(items.count)-\(hub.item == nil)") {
+            guard items.count > 1, hub.item == nil else { return }
+            try? await Task.sleep(nanoseconds: 9_000_000_000)
+            if !Task.isCancelled { slide = (slide + 1) % items.count }
+        }
+    }
+
+    private func title(_ i: HeroItem) -> some View {
+        Text(i.heroTitle).font(NxFont.display(34, .heavy)).foregroundStyle(.white).lineLimit(2).minimumScaleFactor(0.6)
+    }
+}
+#endif
+
+/// A browsing page: the hero, then the rows. Shared by Home, Film, Serie TV and the viewer's own page.
+struct BrowsePage<Top: View>: View {
     let state: HomeState
     var emptyTitle = "Nessun canale"
     var emptyText = "Controlla la connessione (VPN) e riprova dalle impostazioni."
+    var loadingLabel = "Preparo la tua Home…"
     var onEnd: (() -> Void)? = nil
+    /// What sits above the hero on the phone (the pills).
+    @ViewBuilder var top: () -> Top
     @EnvironmentObject var app: AppModel
     @EnvironmentObject var store: LiveStore
 
     var body: some View {
         if state.rows.isEmpty && state.carousel.isEmpty {
-            if state.loading { BrandLoader(label: app.syncStatus ?? "Preparo la tua Home…").frame(maxWidth: .infinity, maxHeight: .infinity) }
-            else { StateMessage(icon: "tv", title: emptyTitle, text: emptyText) }
+            if state.loading { BrandLoader(label: app.syncStatus ?? loadingLabel).frame(maxWidth: .infinity, maxHeight: .infinity) }
+            else { VStack(spacing: 0) { top(); StateMessage(icon: "tv", title: emptyTitle, text: emptyText) } }
         } else {
+            #if os(tvOS)
+            ZStack(alignment: .topLeading) {
+                Billboard(items: state.carousel)
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVStack(alignment: .leading, spacing: Metrics.rowGap) {
+                        top()
+                        rows
+                        Color.clear.frame(height: 60)
+                    }
+                    .padding(.top, 14)
+                }
+                .scrollClipDisabled(false)
+                .padding(.top, Billboard.height)
+            }
+            .ignoresSafeArea()
+            .onAppear { FocusHub.shared.clear() }
+            #else
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: false) {
                     LazyVStack(alignment: .leading, spacing: Metrics.rowGap) {
-                        if !state.carousel.isEmpty { HeroCarousel(items: state.carousel).id("top") }
-                        else { Color.clear.frame(height: Metrics.u(8)).id("top") }
-                        if let s = app.syncStatus {
-                            HStack(spacing: 8) { ProgressView(); Text(s).font(NxFont.caption).foregroundStyle(NxColor.textDim) }.padding(.horizontal, Metrics.gutter)
+                        VStack(spacing: 12) {
+                            top()
+                            if !state.carousel.isEmpty { HeroCarousel(items: state.carousel) }
                         }
-                        ForEach(state.rows) { row in rowView(row) }
-                        if let end = onEnd { Color.clear.frame(height: 1).onAppear(perform: end) }
-                        Color.clear.frame(height: Metrics.u(24))
+                        .id("top")
+                        rows
+                        Color.clear.frame(height: 16)
                     }
                 }
                 .onChange(of: app.reselect) { _, _ in withAnimation { proxy.scrollTo("top", anchor: .top) } }
             }
-            #if os(iOS)
-            .ignoresSafeArea(edges: .top)
             #endif
         }
+    }
+
+    @ViewBuilder private var rows: some View {
+        if let s = app.syncStatus {
+            HStack(spacing: Metrics.u(8)) { NxSpinner(size: 14); Text(s).font(NxFont.caption).foregroundStyle(NxColor.textDim) }.padding(.horizontal, Metrics.gutter)
+        }
+        ForEach(state.rows) { row in rowView(row) }
+        if let end = onEnd { Color.clear.frame(height: 1).onAppear(perform: end) }
     }
 
     @ViewBuilder private func rowView(_ row: HomeRow) -> some View {
         switch row {
         case .shows(_, let title, let items, let wide, let sub):
             CardRow(title: title, sub: sub, items: items) { s in
-                ShowCard(showing: s, style: wide ? .wide : .compact, favorite: store.favorites.contains(s.channel.streamId), reminder: store.reminders.contains(s.channel.streamId),
-                         onTap: { if s.isLive() && !Metrics.tv { app.openShowing(s) } else { app.openShowing(s) } },
-                         onPlay: { app.play(s.channel) }, onFavorite: { app.toggleFavorite(s.channel) }, onReminder: { app.toggleReminder(s) })
+                ShowCard(showing: s, style: wide ? .wide : .compact, favorite: store.favorites.contains(s.channel.streamId), reminder: store.reminders.contains(s.channel.streamId)) { app.openShowing(s) }
             }
         case .channels(let id, let title, let items):
             CardRow(title: title, items: items) { c in
-                ChannelCard(showing: store.showing(c), favorite: store.favorites.contains(c.streamId),
-                            onTap: { app.play(c, ids: id.hasPrefix("cat-") ? items.map { $0.streamId } : nil) },
-                            onInfo: { app.openShowing(store.showing(c)) }, onFavorite: { app.toggleFavorite(c) })
+                ChannelCard(showing: store.showing(c), favorite: store.favorites.contains(c.streamId)) { app.play(c, ids: id.hasPrefix("cat-") ? items.map { $0.streamId } : nil) }
             }
         case .vod(_, let title, let r, let overlays, let sub, let tag):
             VodRowView(row: r, overlays: overlays, tag: tag, sub: sub, title: title)
@@ -208,6 +286,13 @@ struct HomePage: View {
     }
 }
 
+extension BrowsePage where Top == EmptyView {
+    init(state: HomeState, emptyTitle: String = "Nessun canale", emptyText: String = "Controlla la connessione (VPN) e riprova dalle impostazioni.", loadingLabel: String = "Preparo la tua Home…", onEnd: (() -> Void)? = nil) {
+        self.init(state: state, emptyTitle: emptyTitle, emptyText: emptyText, loadingLabel: loadingLabel, onEnd: onEnd, top: { EmptyView() })
+    }
+}
+
+/// Home: what is on now, what was left half way, what to watch next.
 struct HomeView: View {
     @EnvironmentObject var app: AppModel
     @EnvironmentObject var store: LiveStore
@@ -216,11 +301,32 @@ struct HomeView: View {
     init(pid: Int64, kids: Bool) { _model = StateObject(wrappedValue: HomeModel(pid: pid, kids: kids)) }
 
     var body: some View {
-        HomePage(state: model.state)
-            .nxPage()
-            .onAppear { model.start(store: store); model.rebuild(store) }
-            .onChange(of: store.version) { _, _ in model.rebuild(store) }
-            .onChange(of: app.syncStatus) { _, _ in model.rebuild(store) }
+        Group {
+            #if os(iOS)
+            VStack(spacing: 0) {
+                NxTopBar(title: "Per \(app.profile?.name ?? "te")", back: false, large: true) {
+                    BarIcon(icon: "magnifyingglass", label: "Cerca") { app.open(.search) }
+                }
+                BrowsePage(state: model.state) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            NxChip(title: "Film", selected: false) { app.open(.vod("movie")) }
+                            NxChip(title: "Serie TV", selected: false) { app.open(.vod("tv")) }
+                            NxChip(title: "Le mie squadre", selected: false) { app.open(.teams) }
+                            NxChip(title: "Download", selected: false) { app.open(.downloads) }
+                        }
+                        .padding(.horizontal, Metrics.gutter).padding(.vertical, 4)
+                    }
+                }
+            }
+            #else
+            BrowsePage(state: model.state)
+            #endif
+        }
+        .nxPage()
+        .onAppear { model.start(store: store); model.rebuild(store) }
+        .onChange(of: store.version) { _, _ in model.rebuild(store) }
+        .onChange(of: app.syncStatus) { _, _ in model.rebuild(store) }
     }
 }
 
@@ -321,7 +427,7 @@ final class MineModel: ObservableObject {
     private func build(_ store: LiveStore) {
         var rows = [HomeRow]()
         if !savedTitles.isEmpty {
-            rows.append(.vod(id: "mine-saved", title: "Da guardare", row: VodRow(id: "saved", title: "Da guardare", items: savedTitles), overlays: badges,
+            rows.append(.vod(id: "mine-saved", title: "La mia lista", row: VodRow(id: "saved", title: "La mia lista", items: savedTitles), overlays: badges,
                              sub: "\(savedTitles.count) titol\(savedTitles.count == 1 ? "o" : "i")", tag: nil))
         }
         let favs = store.channels.filter { store.favorites.contains($0.streamId) }
@@ -343,6 +449,8 @@ final class MineModel: ObservableObject {
     }
 }
 
+/// The viewer's own page. Apple TV: "La mia lista". iPhone: "Il mio spazio" — the profile, the shortcuts, then the
+/// saved titles, the favourite channels and what was left half way.
 struct MineView: View {
     @EnvironmentObject var app: AppModel
     @EnvironmentObject var store: LiveStore
@@ -350,12 +458,72 @@ struct MineView: View {
 
     init(pid: Int64, kids: Bool) { _model = StateObject(wrappedValue: MineModel(pid: pid, kids: kids)) }
 
+    private var rowsOnly: HomeState { HomeState(carousel: Metrics.tv ? model.state.carousel : [], rows: model.state.rows, loading: model.state.loading) }
+
     var body: some View {
-        HomePage(state: model.state, emptyTitle: "Qui trovi i tuoi contenuti",
-                 emptyText: "Salva un titolo con il segnalibro, un canale con la stella: li ritrovi qui, insieme a ciò che potrebbe piacerti.",
-                 onEnd: { model.loadMore(store) })
-            .nxPage()
-            .onAppear { model.refresh(store) }
-            .onChange(of: store.version) { _, _ in model.refresh(store) }
+        Group {
+            #if os(iOS)
+            VStack(spacing: 0) {
+                NxTopBar(title: "Il mio spazio", back: false, large: true) {
+                    BarIcon(icon: "magnifyingglass", label: "Cerca") { app.open(.search) }
+                    BarIcon(icon: "gearshape", label: "Impostazioni") { app.open(.settings) }
+                }
+                BrowsePage(state: rowsOnly, emptyTitle: "Qui trovi i tuoi contenuti",
+                           emptyText: "Aggiungi un titolo alla tua lista, un canale ai preferiti: li ritrovi qui.",
+                           loadingLabel: "Carico i tuoi contenuti…", onEnd: { model.loadMore(store) }) { header }
+            }
+            #else
+            BrowsePage(state: rowsOnly, emptyTitle: "Qui trovi i tuoi contenuti",
+                       emptyText: "Aggiungi un titolo alla tua lista, un canale ai preferiti: li ritrovi qui, insieme a ciò che potrebbe piacerti.",
+                       loadingLabel: "Carico i tuoi contenuti…", onEnd: { model.loadMore(store) })
+            #endif
+        }
+        .nxPage()
+        .onAppear { model.refresh(store) }
+        .onChange(of: store.version) { _, _ in model.refresh(store) }
     }
+
+    #if os(iOS)
+    private var header: some View {
+        VStack(spacing: 14) {
+            if let p = app.profile {
+                Button { app.changeProfile() } label: {
+                    VStack(spacing: 8) {
+                        p.face(72)
+                        HStack(spacing: 6) {
+                            Text(p.name).font(NxFont.display(20, .bold)).foregroundStyle(.white)
+                            Image(systemName: "chevron.down").font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
+                        }
+                    }
+                }
+                .buttonStyle(NxPlainStyle())
+                .accessibilityLabel("Cambia profilo")
+            }
+            VStack(spacing: 0) {
+                shortcut("arrow.down.to.line", NxColor.kids, "Download", "Film ed episodi salvati sul telefono") { app.open(.downloads) }
+                shortcut("appletvremote.gen4.fill", NxColor.accent, "Telecomando della TV", "Comanda NexStream sulla TV di casa") { app.open(.remote) }
+                shortcut("soccerball", NxColor.success, "Le tue squadre", "Partite in Home e un avviso prima dell'inizio") { app.open(.teams) }
+            }
+        }
+        .padding(.top, 6)
+    }
+
+    private func shortcut(_ icon: String, _ color: Color, _ title: String, _ sub: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon).font(.system(size: 17, weight: .semibold)).foregroundStyle(.white)
+                    .frame(width: 40, height: 40).background(color, in: Circle())
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(NxFont.ui(16, .bold)).foregroundStyle(.white)
+                    Text(sub).font(NxFont.caption).foregroundStyle(NxColor.textDim).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.system(size: 14, weight: .semibold)).foregroundStyle(NxColor.textDim)
+            }
+            .padding(.horizontal, Metrics.gutter).padding(.vertical, 9)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(NxPlainStyle(scale: 0.99))
+    }
+    #endif
 }

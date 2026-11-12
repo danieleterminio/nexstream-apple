@@ -1,14 +1,21 @@
 import SwiftUI
 
-/// Backdrop of the gate screens: ink with a soft glow of the brand colours, so the glass panels have something to bend.
-struct GateBackground: View {
+/// The frame of the screens before the app: black, the brand on top.
+struct GateFrame<Content: View>: View {
+    var brand = true
+    @ViewBuilder var content: () -> Content
     var body: some View {
-        ZStack {
-            NxColor.bg
-            RadialGradient(colors: [NxColor.accent.opacity(0.38), .clear], center: .topLeading, startRadius: 0, endRadius: Metrics.u(520))
-            RadialGradient(colors: [NxColor.ember.opacity(0.22), .clear], center: .bottomTrailing, startRadius: 0, endRadius: Metrics.u(480))
+        ZStack(alignment: .top) {
+            NxColor.bg.ignoresSafeArea()
+            content().frame(maxWidth: .infinity, maxHeight: .infinity)
+            if brand {
+                HStack {
+                    Image("BrandLockup").resizable().scaledToFit().frame(height: Metrics.u(26))
+                    Spacer()
+                }
+                .padding(.horizontal, Metrics.u(Metrics.tv ? 40 : 18)).padding(.top, Metrics.u(Metrics.tv ? 30 : 10))
+            }
         }
-        .ignoresSafeArea()
     }
 }
 
@@ -20,32 +27,30 @@ struct VpnGateView: View {
     @Environment(\.openURL) private var openURL
 
     var body: some View {
-        ZStack {
-            GateBackground()
-            VStack(spacing: Metrics.u(16)) {
-                Image(systemName: "lock.shield.fill").font(.system(size: 52 * Metrics.unit, weight: .regular)).foregroundStyle(NxColor.brand)
+        GateFrame {
+            VStack(spacing: Metrics.u(14)) {
+                Image(systemName: "lock.shield.fill").font(.system(size: 54 * Metrics.unit, weight: .regular)).foregroundStyle(.white)
                 Text("Accendi la VPN").font(NxFont.titleXL).foregroundStyle(NxColor.text)
                 Text("Apri l'app della VPN, collegati e torna qui: la schermata sparisce da sola.")
                     .font(NxFont.body).foregroundStyle(NxColor.textMuted).multilineTextAlignment(.center)
-                #if os(iOS)
-                NxButton("Apri NordVPN", icon: "arrow.up.forward.app", kind: .primary) {
-                    if let u = URL(string: "nordvpn://") { openURL(u) { ok in if !ok, let s = URL(string: "App-prefs:") { openURL(s) } } }
-                }
-                .padding(.top, Metrics.u(4))
-                if app.core.db.downloads().contains(where: { $0.state == "done" }) {
-                    NxButton("Guarda i download", icon: "arrow.down.circle") { app.offlineDownloads = true }
-                }
-                #endif
                 HStack(spacing: 6) {
                     Circle().fill(NxColor.accent).frame(width: Metrics.u(8), height: Metrics.u(8))
-                    Text("Stato: VPN non rilevata").font(NxFont.caption).foregroundStyle(NxColor.textDim)
+                    Text("VPN non rilevata").font(NxFont.caption).foregroundStyle(NxColor.textDim)
                 }
-                .padding(.top, Metrics.u(6))
+                #if os(iOS)
+                VStack(spacing: 10) {
+                    NxButton("Apri NordVPN", icon: "arrow.up.forward.app", kind: .primary, wide: true) {
+                        if let u = URL(string: "nordvpn://") { openURL(u) { ok in if !ok, let s = URL(string: "App-prefs:") { openURL(s) } } }
+                    }
+                    if app.core.db.downloads().contains(where: { $0.state == "done" }) {
+                        NxButton("Guarda i download", icon: "arrow.down.to.line", wide: true) { app.offlineDownloads = true }
+                    }
+                }
+                .padding(.top, 10)
+                #endif
             }
             .padding(Metrics.u(28))
-            .frame(maxWidth: Metrics.u(440))
-            .nxGlassPanel()
-            .padding(Metrics.u(20))
+            .frame(maxWidth: Metrics.u(400))
         }
     }
 }
@@ -61,73 +66,63 @@ struct LoginView: View {
     @State private var showPassword = false
     @State private var phone = false
     @FocusState private var focus: Field?
-    private enum Field { case user, pass, go }
+    private enum Field { case user, pass }
 
     var body: some View {
-        ZStack {
-            GateBackground()
-            VStack(alignment: .leading, spacing: Metrics.u(14)) {
-                Image("BrandLockup").resizable().scaledToFit().frame(height: Metrics.u(40))
-                Text("Accedi alla tua linea").font(NxFont.titleL).foregroundStyle(NxColor.text)
-                Text("L'indirizzo del server è automatico: bastano nome utente e password.").font(NxFont.meta).foregroundStyle(NxColor.textDim)
-                field("NOME UTENTE") {
-                    TextField("Nome utente", text: $username)
-                        .textContentType(.username).autocorrectionDisabled().textInputAutocapitalization(.never)
-                        .focused($focus, equals: .user).submitLabel(.next).onSubmit { focus = .pass }
-                }
-                field("PASSWORD") {
-                    HStack {
-                        Group {
-                            if showPassword { TextField("Password", text: $password) } else { SecureField("Password", text: $password) }
-                        }
-                        .textContentType(.password).autocorrectionDisabled().textInputAutocapitalization(.never)
-                        .focused($focus, equals: .pass).submitLabel(.go).onSubmit { submit() }
-                        #if os(iOS)
-                        Button { showPassword.toggle() } label: { Image(systemName: showPassword ? "eye.slash" : "eye").foregroundStyle(NxColor.textDim) }.buttonStyle(.plain)
-                        #endif
-                    }
-                }
-                if let e = error {
-                    Label(e, systemImage: "exclamationmark.triangle.fill").font(NxFont.meta).foregroundStyle(NxColor.accentBright)
-                } else if busy {
-                    HStack(spacing: 8) { ProgressView(); Text("Accesso in corso…").font(NxFont.meta).foregroundStyle(NxColor.textMuted) }
-                }
-                NxButton("Accedi", icon: "arrow.right", kind: .primary, wide: true) { submit() }
-                    .disabled(busy || username.trimmed.isEmpty || password.isEmpty)
-                    .focused($focus, equals: .go)
-                    .padding(.top, Metrics.u(4))
-                #if os(tvOS)
-                NxButton("Accedi dal telefono", icon: "qrcode", wide: true) { phone = true }
-                #endif
-            }
-            .padding(Metrics.u(26))
-            .frame(maxWidth: Metrics.u(460))
-            .nxGlassPanel()
-            .padding(Metrics.u(18))
+        GateFrame {
+            #if os(tvOS)
+            if phone { PhoneLoginPanel { phone = false } } else { form }
+            #else
+            form
+            #endif
         }
-        #if os(tvOS)
-        .fullScreenCover(isPresented: $phone) {
-            ZStack { GateBackground(); PhoneLoginPanel { phone = false } }.environmentObject(app)
-        }
-        #endif
         .onAppear {
             if let u = ProcessInfo.processInfo.environment["NX_USER"], let p = ProcessInfo.processInfo.environment["NX_PASS"] { username = u; password = p; submit() }
         }
     }
 
-    @ViewBuilder private func field<C: View>(_ label: String, @ViewBuilder _ content: () -> C) -> some View {
-        VStack(alignment: .leading, spacing: Metrics.u(6)) {
-            Text(label).font(NxFont.label).tracking(1).foregroundStyle(NxColor.textDim)
+    private var form: some View {
+        VStack(alignment: .leading, spacing: Metrics.u(14)) {
+            Text("Accedi").font(NxFont.display(30, .bold)).foregroundStyle(NxColor.text)
+            Text("L'indirizzo del server è automatico: bastano nome utente e password della tua linea.").font(NxFont.meta).foregroundStyle(NxColor.textDim)
+            NxField {
+                TextField("", text: $username, prompt: Text("Nome utente").foregroundColor(NxColor.textDim))
+                    .textContentType(.username).autocorrectionDisabled().textInputAutocapitalization(.never)
+                    .focused($focus, equals: .user).submitLabel(.next).onSubmit { focus = .pass }
+            }
+            NxField {
+                Group {
+                    if showPassword { TextField("", text: $password, prompt: Text("Password").foregroundColor(NxColor.textDim)) }
+                    else { SecureField("", text: $password, prompt: Text("Password").foregroundColor(NxColor.textDim)) }
+                }
+                .textContentType(.password).autocorrectionDisabled().textInputAutocapitalization(.never)
+                .focused($focus, equals: .pass).submitLabel(.go).onSubmit { submit() }
+                #if os(iOS)
+                Button { showPassword.toggle() } label: {
+                    Text(showPassword ? "NASCONDI" : "MOSTRA").font(NxFont.ui(11, .heavy)).foregroundStyle(NxColor.textMuted)
+                }
+                .buttonStyle(NxPlainStyle(scale: 0.95))
+                #endif
+            }
+            if let e = error {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                    Text(e)
+                }
+                .font(NxFont.meta).foregroundStyle(NxColor.ember)
+            }
+            NxButton(busy ? "Accesso in corso…" : "Accedi", kind: .primary, wide: true) { submit() }
+                .disabled(busy || username.trimmed.isEmpty || password.isEmpty)
+                .padding(.top, Metrics.u(4))
             #if os(tvOS)
-            content()
-            #else
-            content()
-                .font(NxFont.ui(17))
-                .padding(.horizontal, 14).padding(.vertical, 13)
-                .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(NxColor.hairline, lineWidth: 1))
+            NxButton("Accedi dal telefono", icon: "qrcode", wide: true) { phone = true }
             #endif
         }
+        .padding(Metrics.u(24))
+        .frame(maxWidth: Metrics.u(440))
+        #if os(tvOS)
+        .focusSection()
+        #endif
     }
 
     private func submit() {
@@ -156,74 +151,81 @@ struct ProfilesView: View {
     var onDone: (() -> Void)? = nil
     @EnvironmentObject var app: AppModel
     @State private var profiles: [ProfileEntity] = []
-    @State private var editing: ProfileEntity? = nil
-    @State private var creating = false
-    @State private var pinFor: ProfileEntity? = nil
-    @State private var loaded = false
+    @State private var editing = false
 
-    private let columns = [GridItem(.adaptive(minimum: Metrics.u(104), maximum: Metrics.u(150)), spacing: Metrics.u(18))]
+    private var editMode: Bool { manage || editing }
+    private let columns = [GridItem(.adaptive(minimum: Metrics.u(100), maximum: Metrics.u(130)), spacing: Metrics.u(22))]
 
     var body: some View {
-        ZStack {
-            GateBackground()
-            ScrollView {
-                VStack(spacing: Metrics.u(22)) {
-                    if !manage { Image("BrandLockup").resizable().scaledToFit().frame(height: Metrics.u(34)).padding(.top, Metrics.u(30)) }
-                    Text(manage ? "Gestisci i profili" : "Chi guarda?").font(NxFont.titleXL).foregroundStyle(NxColor.text)
-                    LazyVGrid(columns: columns, spacing: Metrics.u(20)) {
-                        ForEach(profiles) { p in
-                            tile(name: p.name, sub: manage ? "Modifica" : (p.pin != nil ? "PIN" : (p.kids ? "Bambini" : nil))) { p.face(84) } action: {
-                                if manage { editing = p } else if p.pin != nil { pinFor = p } else { app.core.profiles.select(p) }
+        GateFrame(brand: !manage) {
+            VStack(spacing: Metrics.u(26)) {
+                Text(editMode ? "Gestisci i profili" : "Chi guarda?").font(NxFont.display(24, .bold)).foregroundStyle(NxColor.text)
+                LazyVGrid(columns: columns, spacing: Metrics.u(22)) {
+                    ForEach(profiles) { p in
+                        tile(name: p.name, action: {
+                            if editMode { edit(p) } else if p.pin != nil { askPin(p) } else { app.core.profiles.select(p) }
+                        }) {
+                            ZStack {
+                                p.face(96).opacity(editMode ? 0.5 : 1)
+                                if editMode { Image(systemName: "pencil").font(.system(size: 30 * Metrics.unit, weight: .semibold)).foregroundStyle(.white) }
+                                else if p.pin != nil {
+                                    Image(systemName: "lock.fill").font(.system(size: 12 * Metrics.unit, weight: .bold)).foregroundStyle(.white)
+                                        .padding(Metrics.u(5)).background(Color.black.opacity(0.55), in: Circle())
+                                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing).padding(Metrics.u(5))
+                                }
                             }
-                        }
-                        if profiles.count < 8 {
-                            tile(name: "Nuovo profilo", sub: nil) {
-                                ZStack { RoundedRectangle(cornerRadius: Metrics.u(22), style: .continuous).fill(Color.white.opacity(0.08)); Image(systemName: "plus").font(.system(size: 30 * Metrics.unit, weight: .medium)).foregroundStyle(NxColor.textMuted) }
-                                    .frame(width: Metrics.u(84), height: Metrics.u(84))
-                            } action: { creating = true }
+                            .frame(width: Metrics.u(96), height: Metrics.u(96))
                         }
                     }
-                    .frame(maxWidth: Metrics.u(640))
-                    if manage { NxButton("Fine", kind: .primary) { onDone?() } }
-                    else if !profiles.isEmpty { NxButton("Gestisci i profili", icon: "pencil") { editing = nil; app.manageProfilesGate = true } }
+                    if profiles.count < 8 {
+                        tile(name: "Aggiungi", action: { edit(nil) }) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: Metrics.u(96) * 0.26, style: .continuous).stroke(NxColor.ink5, lineWidth: Metrics.u(1.5))
+                                Image(systemName: "plus").font(.system(size: 34 * Metrics.unit, weight: .light)).foregroundStyle(NxColor.textMuted)
+                            }
+                            .frame(width: Metrics.u(96), height: Metrics.u(96))
+                        }
+                    }
                 }
-                .padding(Metrics.u(24))
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: Metrics.u(Metrics.tv ? 560 : 300))
+                if manage { NxButton("Fine", kind: .primary) { onDone?() } }
+                else if editing { NxButton("Fine", kind: .primary) { editing = false } }
+                else if !profiles.isEmpty { NxButton("Gestisci i profili", icon: "pencil", kind: .quiet) { editing = true } }
             }
+            .padding(Metrics.u(24))
         }
         .onAppear { reload(); if !manage { app.autoSelectProfile() } }
-        .sheet(isPresented: $creating, onDismiss: reload) {
-            ProfileEditor(profile: nil, taken: profiles) { created in
-                creating = false
-                if let c = created, !manage { app.onboardingFor = c.id; app.core.profiles.select(c) }
+    }
+
+    private func reload() { profiles = app.core.profiles.all() }
+
+    private func edit(_ p: ProfileEntity?) {
+        let taken = profiles
+        let select = !manage && !editing
+        app.present(p == nil ? "Nuovo profilo" : "Modifica profilo", style: .page) {
+            ProfileEditor(profile: p, taken: taken) { created in
+                app.dismissSheet()
+                reload()
+                if let c = created, p == nil, select { app.onboardingFor = c.id; app.core.profiles.select(c) }
             }
-        }
-        .sheet(item: $editing, onDismiss: reload) { p in ProfileEditor(profile: p, taken: profiles) { _ in editing = nil } }
-        .sheet(item: $pinFor) { p in
-            PinPad(title: "PIN di \(p.name)") { pin in
-                if pin == p.pin { pinFor = nil; app.core.profiles.select(p); return true }
-                return false
-            } onCancel: { pinFor = nil }
         }
     }
 
-    private func reload() { profiles = app.core.profiles.all(); loaded = true }
-
-    private func tile<Face: View>(name: String, sub: String?, @ViewBuilder face: () -> Face, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: Metrics.u(8)) {
-                face()
-                Text(name).font(NxFont.bodyStrong).foregroundStyle(NxColor.text).lineLimit(1)
-                Text(sub ?? " ").font(NxFont.caption).foregroundStyle(NxColor.textDim).lineLimit(1)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, Metrics.u(8))
+    private func askPin(_ p: ProfileEntity) {
+        app.present(nil, style: .dialog) {
+            PinPad(title: "PIN di \(p.name)") { pin in
+                if pin == p.pin { app.dismissSheet(); app.core.profiles.select(p); return true }
+                return false
+            } onCancel: { app.dismissSheet() }
         }
-        #if os(tvOS)
-        .buttonStyle(.card)
-        #else
-        .buttonStyle(PressScaleStyle())
-        #endif
+    }
+
+    private func tile<Face: View>(name: String, action: @escaping () -> Void, @ViewBuilder face: () -> Face) -> some View {
+        let f = face()
+        return VStack(spacing: Metrics.u(8)) {
+            CardButton(action: action, radius: Metrics.u(96) * 0.26) { f }
+            Text(name).font(NxFont.ui(14, .semibold)).foregroundStyle(NxColor.textMuted).lineLimit(1)
+        }
     }
 }
 
@@ -238,87 +240,87 @@ struct ProfileEditor: View {
     @State private var icon = 0
     @State private var maturity = 2
     @State private var pin: String? = nil
-    @State private var askPin = false
-    @State private var confirmDelete = false
     @State private var error: String? = nil
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: Metrics.u(18)) {
-                    HStack(spacing: Metrics.u(16)) {
-                        AvatarFace(name: name.isEmpty ? "?" : name, color: color, kids: maturity == 0, icon: icon, size: 72)
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("NOME").font(NxFont.label).tracking(1).foregroundStyle(NxColor.textDim)
-                            TextField("Nome del profilo", text: $name).font(NxFont.ui(18, .semibold))
-                                .onChange(of: name) { _, v in if v.count > 16 { name = String(v.prefix(16)) } }
-                        }
-                    }
-                    group("COLORE") {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: Metrics.u(44)), spacing: Metrics.u(10))], spacing: Metrics.u(10)) {
-                            ForEach(0..<Avatars.colors.count, id: \.self) { i in
-                                Button { color = i } label: {
-                                    Circle().fill(Avatars.gradient(i)).frame(width: Metrics.u(40), height: Metrics.u(40))
-                                        .overlay(Circle().stroke(Color.white, lineWidth: color == i ? 3 : 0))
-                                }.buttonStyle(.plain)
-                            }
-                        }
-                    }
-                    group("ICONA") {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: Metrics.u(44)), spacing: Metrics.u(10))], spacing: Metrics.u(10)) {
-                            ForEach(0..<Avatars.icons.count, id: \.self) { i in
-                                Button { icon = i } label: {
-                                    ZStack {
-                                        Circle().fill(icon == i ? AnyShapeStyle(Avatars.gradient(color)) : AnyShapeStyle(Color.white.opacity(0.08)))
-                                        if let s = Avatars.icons[i] { Image(systemName: s).font(.system(size: 17 * Metrics.unit, weight: .semibold)).foregroundStyle(.white) }
-                                        else { Text(String(name.prefix(1)).uppercased().isEmpty ? "A" : String(name.prefix(1)).uppercased()).font(NxFont.display(16, .bold)).foregroundStyle(.white) }
-                                    }.frame(width: Metrics.u(40), height: Metrics.u(40))
-                                }.buttonStyle(.plain)
-                            }
-                        }
-                    }
-                    group("PER CHI È") {
-                        HStack(spacing: Metrics.u(8)) {
-                            ForEach(0..<3, id: \.self) { i in NxChip(title: Avatars.maturityLabels[i], selected: maturity == i) { maturity = i } }
-                        }
-                        Text(maturity == 0 ? "Solo canali e titoli per bambini." : (maturity == 1 ? "Niente horror tra i titoli on demand." : "Nessun filtro."))
-                            .font(NxFont.caption).foregroundStyle(NxColor.textDim)
-                    }
-                    group("PIN") {
-                        HStack(spacing: Metrics.u(10)) {
-                            NxButton(pin == nil ? "Imposta un PIN" : "Cambia PIN", icon: "lock") { askPin = true }
-                            if pin != nil { NxButton("Togli", kind: .quiet) { pin = nil } }
-                        }
-                        Text(pin == nil ? "Senza PIN chiunque può entrare in questo profilo." : "Serve il PIN di 4 cifre per entrare.").font(NxFont.caption).foregroundStyle(NxColor.textDim)
-                    }
-                    if let e = error { Text(e).font(NxFont.meta).foregroundStyle(NxColor.accentBright) }
-                    if profile != nil {
-                        NxButton("Elimina il profilo", icon: "trash", kind: .danger) { confirmDelete = true }.padding(.top, Metrics.u(6))
+        VStack(alignment: .leading, spacing: Metrics.u(18)) {
+            HStack(spacing: Metrics.u(16)) {
+                AvatarFace(name: name.isEmpty ? "?" : name, color: color, kids: maturity == 0, icon: icon, size: 72)
+                NxField {
+                    TextField("", text: $name, prompt: Text("Nome del profilo").foregroundColor(NxColor.textDim))
+                        .autocorrectionDisabled()
+                        .onChange(of: name) { _, v in if v.count > 16 { name = String(v.prefix(16)) } }
+                }
+            }
+            group("COLORE") {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: Metrics.u(44)), spacing: Metrics.u(10))], spacing: Metrics.u(10)) {
+                    ForEach(0..<Avatars.colors.count, id: \.self) { i in
+                        swatch(selected: color == i, action: { color = i }) { Circle().fill(Avatars.gradient(i)) }
                     }
                 }
-                .padding(Metrics.u(20))
             }
-            .nxPage()
-            .navigationTitle(profile == nil ? "Nuovo profilo" : "Modifica profilo")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Annulla") { onClose(nil) } }
-                ToolbarItem(placement: .confirmationAction) { Button("Salva") { save() }.disabled(name.trimmed.isEmpty) }
+            group("ICONA") {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: Metrics.u(44)), spacing: Metrics.u(10))], spacing: Metrics.u(10)) {
+                    ForEach(0..<Avatars.icons.count, id: \.self) { i in
+                        swatch(selected: icon == i, action: { icon = i }) {
+                            ZStack {
+                                Circle().fill(icon == i ? AnyShapeStyle(Avatars.gradient(color)) : AnyShapeStyle(NxColor.ink4))
+                                if let s = Avatars.icons[i] { Image(systemName: s).font(.system(size: 17 * Metrics.unit, weight: .semibold)).foregroundStyle(.white) }
+                                else { Text(String(name.prefix(1)).uppercased().isEmpty ? "A" : String(name.prefix(1)).uppercased()).font(NxFont.display(16, .bold)).foregroundStyle(.white) }
+                            }
+                        }
+                    }
+                }
             }
+            group("PER CHI È") {
+                HStack(spacing: Metrics.u(8)) {
+                    ForEach(0..<3, id: \.self) { i in NxChip(title: Avatars.maturityLabels[i], selected: maturity == i) { maturity = i } }
+                }
+                Text(maturity == 0 ? "Solo canali e titoli per bambini." : (maturity == 1 ? "Niente horror tra i titoli on demand." : "Nessun filtro."))
+                    .font(NxFont.caption).foregroundStyle(NxColor.textDim)
+            }
+            group("PIN") {
+                HStack(spacing: Metrics.u(10)) {
+                    NxButton(pin == nil ? "Imposta un PIN" : "Cambia PIN", icon: "lock") {
+                        app.present(nil, style: .dialog) {
+                            PinPad(title: "Scegli un PIN di 4 cifre") { p in pin = p; app.dismissSheet(); return true } onCancel: { app.dismissSheet() }
+                        }
+                    }
+                    if pin != nil { NxButton("Togli", kind: .quiet) { pin = nil } }
+                }
+                Text(pin == nil ? "Senza PIN chiunque può entrare in questo profilo." : "Serve il PIN di 4 cifre per entrare.").font(NxFont.caption).foregroundStyle(NxColor.textDim)
+            }
+            if let e = error { Text(e).font(NxFont.meta).foregroundStyle(NxColor.ember) }
+            VStack(spacing: Metrics.u(8)) {
+                NxButton("Salva", kind: .primary, wide: true) { save() }.disabled(name.trimmed.isEmpty)
+                if let p = profile {
+                    NxButton("Elimina il profilo", icon: "trash", kind: .danger, wide: true) {
+                        app.confirm("Eliminare \(p.name)?", message: "Preferiti, lista e cronologia di questo profilo vanno persi.", confirm: "Elimina profilo e dati", destructive: true) {
+                            app.core.profiles.delete(p)
+                            onClose(nil)
+                        }
+                    }
+                }
+            }
+            .padding(.top, Metrics.u(6))
         }
+        .padding(.horizontal, Metrics.u(18)).padding(.top, Metrics.u(6))
         .onAppear {
             if let p = profile { name = p.name; color = p.avatarColor; icon = p.avatarIcon; maturity = p.level; pin = p.pin }
             else { color = (0..<Avatars.colors.count).first { i in !taken.contains { $0.avatarColor == i } } ?? 0 }
         }
-        .sheet(isPresented: $askPin) {
-            PinPad(title: "Scegli un PIN di 4 cifre") { p in pin = p; askPin = false; return true } onCancel: { askPin = false }
+    }
+
+    private func swatch<C: View>(selected: Bool, action: @escaping () -> Void, @ViewBuilder _ content: () -> C) -> some View {
+        let c = content()
+        return Button(action: action) {
+            Focusable { focused in
+                c.frame(width: Metrics.u(40), height: Metrics.u(40))
+                    .overlay(Circle().stroke(Color.white, lineWidth: selected || focused ? Metrics.u(2.5) : 0))
+                    .scaleEffect(focused ? 1.15 : 1)
+            }
         }
-        .confirmationDialog("Eliminare questo profilo?", isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("Elimina profilo e dati", role: .destructive) { if let p = profile { app.core.profiles.delete(p) }; onClose(nil) }
-            Button("Annulla", role: .cancel) {}
-        } message: { Text("Preferiti, Da guardare e cronologia di questo profilo vanno persi.") }
+        .buttonStyle(NxPlainStyle(scale: 0.92))
     }
 
     private func group<C: View>(_ label: String, @ViewBuilder _ content: () -> C) -> some View {
@@ -351,40 +353,37 @@ struct PinPad: View {
     @State private var wrong = false
 
     var body: some View {
-        VStack(spacing: Metrics.u(22)) {
-            Text(title).font(NxFont.titleM).foregroundStyle(NxColor.text)
-            HStack(spacing: Metrics.u(14)) {
+        VStack(spacing: Metrics.u(18)) {
+            Text(title).font(NxFont.titleM).foregroundStyle(NxColor.text).multilineTextAlignment(.center)
+            HStack(spacing: Metrics.u(12)) {
                 ForEach(0..<4, id: \.self) { i in
-                    Circle().fill(i < digits.count ? Color.white : Color.white.opacity(0.18)).frame(width: Metrics.u(14), height: Metrics.u(14))
+                    RoundedRectangle(cornerRadius: Metrics.u(4), style: .continuous)
+                        .stroke(i == digits.count ? Color.white : NxColor.ink5, lineWidth: Metrics.u(1.5))
+                        .frame(width: Metrics.u(40), height: Metrics.u(48))
+                        .overlay { if i < digits.count { Circle().fill(Color.white).frame(width: Metrics.u(11), height: Metrics.u(11)) } }
                 }
             }
             .offset(x: wrong ? -8 : 0)
             .animation(wrong ? .default.repeatCount(3, autoreverses: true).speed(4) : .default, value: wrong)
-            if wrong { Text("PIN sbagliato").font(NxFont.caption).foregroundStyle(NxColor.accentBright) }
-            LazyVGrid(columns: Array(repeating: GridItem(.fixed(Metrics.u(72)), spacing: Metrics.u(14)), count: 3), spacing: Metrics.u(14)) {
+            Text(wrong ? "PIN sbagliato" : " ").font(NxFont.caption).foregroundStyle(NxColor.ember)
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(Metrics.u(68)), spacing: Metrics.u(12)), count: 3), spacing: Metrics.u(10)) {
                 ForEach(["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "<"], id: \.self) { k in
-                    if k.isEmpty { Color.clear.frame(width: Metrics.u(72), height: Metrics.u(60)) }
+                    if k.isEmpty { Color.clear.frame(width: Metrics.u(68), height: Metrics.u(52)) }
                     else {
                         Button { press(k) } label: {
-                            Group { if k == "<" { Image(systemName: "delete.left") } else { Text(k) } }
-                                .font(NxFont.display(22, .semibold)).foregroundStyle(NxColor.text)
-                                .frame(width: Metrics.u(72), height: Metrics.u(60))
+                            Focusable { focused in
+                                Group { if k == "<" { Image(systemName: "delete.left") } else { Text(k) } }
+                                    .font(NxFont.display(21, .semibold)).foregroundStyle(focused ? Color.black : Color.white)
+                                    .frame(width: Metrics.u(68), height: Metrics.u(52))
+                                    .background(focused ? Color.white : (k == "<" ? Color.clear : NxColor.ink5), in: RoundedRectangle(cornerRadius: Metrics.u(6), style: .continuous))
+                            }
                         }
-                        #if os(tvOS)
-                        .buttonStyle(.glass)
-                        #else
-                        .buttonStyle(.plain)
-                        .glassEffect(Glass.regular.interactive(), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        #endif
+                        .buttonStyle(NxPlainStyle(scale: 0.93))
                     }
                 }
             }
             NxButton("Annulla", kind: .quiet, action: onCancel)
         }
-        .padding(Metrics.u(26))
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(NxColor.bg.ignoresSafeArea())
-        .presentationDetents([.medium, .large])
     }
 
     private func press(_ k: String) {
@@ -410,7 +409,7 @@ struct OnboardingView: View {
     @State private var picked = Set<String>()
 
     var body: some View {
-        VStack(spacing: Metrics.u(14)) {
+        VStack(spacing: Metrics.u(12)) {
             VStack(spacing: Metrics.u(6)) {
                 Text("Cosa ti piace guardare?").font(NxFont.titleL).foregroundStyle(NxColor.text)
                 Text("Scegline almeno 3: ti proponiamo subito titoli giusti per te.").font(NxFont.meta).foregroundStyle(NxColor.textDim).multilineTextAlignment(.center)
@@ -419,15 +418,15 @@ struct OnboardingView: View {
             if let list = titles {
                 if list.isEmpty { StateMessage(icon: "film", title: "Nessun titolo disponibile al momento", text: "Puoi saltare questo passaggio.") }
                 else {
-                    ScrollView {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: Metrics.posterW * 0.86), spacing: Metrics.cardGap)], spacing: Metrics.cardGap) {
+                    ScrollView(.vertical, showsIndicators: false) {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: Metrics.posterW * 0.9), spacing: Metrics.cardGap)], spacing: Metrics.u(10)) {
                             ForEach(list) { t in
                                 let on = picked.contains(t.key)
-                                PosterCard(title: t, width: Metrics.posterW * 0.86) { if on { picked.remove(t.key) } else { picked.insert(t.key) } }
+                                PosterCard(title: t, width: Metrics.posterW * 0.9, menu: false) { if on { picked.remove(t.key) } else { picked.insert(t.key) } }
                                     .overlay(alignment: .topTrailing) {
-                                        if on { Image(systemName: "checkmark.circle.fill").font(.system(size: 26 * Metrics.unit)).foregroundStyle(.white, NxColor.accent).padding(6) }
+                                        if on { Image(systemName: "checkmark.circle.fill").font(.system(size: 26 * Metrics.unit)).foregroundStyle(.white, NxColor.accent).padding(6).allowsHitTesting(false) }
                                     }
-                                    .opacity(picked.isEmpty || on ? 1 : 0.72)
+                                    .opacity(picked.isEmpty || on ? 1 : 0.6)
                             }
                         }
                         .padding(.horizontal, Metrics.gutter).padding(.vertical, Metrics.u(12))

@@ -50,27 +50,45 @@ final class RemoteClient {
         }
     }
 
-    /// The address ("host:port") behind a service found by Bonjour.
+    /// The IPv4 address ("host:port") behind a service found by Bonjour. IPv4 on purpose: Android announces IPv6
+    /// addresses too and the system likes them better, but what is kept and typed here is "a.b.c.d:port". First on the
+    /// home network only (never a VPN tunnel), then the way the system prefers.
     static func resolve(_ endpoint: NWEndpoint) async -> String? {
+        if let a = await resolve(endpoint, bound: true) { return a }
+        return await resolve(endpoint, bound: false)
+    }
+
+    private static func resolve(_ endpoint: NWEndpoint, bound: Bool) async -> String? {
         await withCheckedContinuation { (cont: CheckedContinuation<String?, Never>) in
-            let c = NWConnection(to: endpoint, using: .tcp)
+            let params = Lan.parameters(bound: bound)
+            // also without the home-network binding an IPv6 address is of no use here
+            if let ip = params.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options { ip.version = .v4 }
+            let c = NWConnection(to: endpoint, using: params)
             let q = DispatchQueue(label: "nx.remote.resolve")
             var done = false
-            func finish(_ v: String?) { if !done { done = true; c.cancel(); cont.resume(returning: v) } }
+            func finish(_ v: String?) { if !done { done = true; c.stateUpdateHandler = nil; c.cancel(); cont.resume(returning: v) } }
             c.stateUpdateHandler = { st in
                 switch st {
                 case .ready:
                     if case .hostPort(let host, let port)? = c.currentPath?.remoteEndpoint {
                         var h = "\(host)"
                         if let pct = h.firstIndex(of: "%") { h = String(h[..<pct]) }
-                        finish(h.contains(":") ? nil : "\(h):\(port.rawValue)")
+                        if h.lowercased().hasPrefix("::ffff:") { h = String(h.dropFirst(7)) }
+                        finish(h.contains(":") || h.isEmpty ? nil : "\(h):\(port.rawValue)")
                     } else { finish(nil) }
-                case .failed, .cancelled, .waiting: finish(nil)
+                case .waiting(let err):
+                    // keep waiting: the path may still come up; only a refused permission is final
+                    NxLog.i("NxRemote", "resolve waiting (\(bound ? "home network" : "default")): \(err)")
+                    if c.currentPath?.unsatisfiedReason == .localNetworkDenied { finish(nil) }
+                case .failed(let err):
+                    NxLog.i("NxRemote", "resolve failed (\(bound ? "home network" : "default")): \(err)")
+                    finish(nil)
+                case .cancelled: finish(nil)
                 default: break
                 }
             }
             c.start(queue: q)
-            q.asyncAfter(deadline: .now() + 4) { finish(nil) }
+            q.asyncAfter(deadline: .now() + 3.5) { finish(nil) }
         }
     }
 }
@@ -93,24 +111,20 @@ struct RemoteView: View {
     @State private var busy = false
     @State private var volume = false
     @State private var channels: [RemoteClient.Channel] = []
-    @State private var showChannels = false
     @State private var query = ""
+    @State private var retried = false
 
     var body: some View {
         Group {
             if let t = tv { pad(t) } else if let a = pairingAddress { pairing(a) } else { picker }
         }
-        .nxPage()
-        .nxTitle(tv?.name ?? "Telecomando")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .tabBar)
+        .nxScreen(tv?.name ?? "Telecomando")
         .onAppear {
             saved = client.saved()
-            finder.start(type: RemoteClient.service) { found = $0 }
+            finder.start(type: RemoteClient.service, onProblem: { p in if let p = p { message = p } }) { found = $0 }
             if tv == nil, let last = saved.first { connect(last.address, name: last.name, token: last.token) }
         }
         .onDisappear { finder.stop() }
-        .sheet(isPresented: $showChannels) { channelSheet }
     }
 
     private func connect(_ address: String, name: String, token: String?) {
@@ -118,7 +132,18 @@ struct RemoteView: View {
         Task {
             let r = await client.hello(address, token: token)
             busy = false
-            if r.status == 0 { message = "Non trovo la TV a \(address). NexStream deve essere aperto sulla TV, sulla stessa rete."; return }
+            if r.status == 0 {
+                // a remembered TV may have changed address: look for it again by name
+                if token != nil, !retried, let d = found.first(where: { $0.label == name }), let fresh = await RemoteClient.resolve(d.endpoint), fresh != address {
+                    retried = true
+                    client.forget(address)
+                    connect(fresh, name: name, token: token)
+                    return
+                }
+                message = r.problem ?? "Non trovo la TV a \(address). NexStream deve essere aperto sulla TV, sulla stessa rete."
+                return
+            }
+            retried = false
             let tvName = r.json["name"].stringOrNil?.substringAfter("· ") ?? name
             volume = r.json["volume"].bool
             if r.json["paired"].bool, let tok = token {
@@ -137,14 +162,14 @@ struct RemoteView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 Text("Apri NexStream sulla TV: compare qui sotto. La prima volta la TV mostra un codice da scrivere sul telefono.").font(NxFont.meta).foregroundStyle(NxColor.textMuted)
-                if busy { HStack(spacing: 8) { ProgressView(); Text("Mi collego…").font(NxFont.meta).foregroundStyle(NxColor.textMuted) } }
+                if busy { HStack(spacing: 8) { NxSpinner(); Text("Mi collego…").font(NxFont.meta).foregroundStyle(NxColor.textMuted) } }
                 if let m = message { Label(m, systemImage: "exclamationmark.triangle.fill").font(NxFont.meta).foregroundStyle(NxColor.accentBright) }
                 if !saved.isEmpty {
                     Text("LE TUE TV").font(NxFont.label).tracking(1).foregroundStyle(NxColor.textDim)
                     ForEach(saved) { t in
                         HStack {
                             NxButton(t.name, icon: "tv", wide: true) { connect(t.address, name: t.name, token: t.token) }
-                            NxIconButton(icon: "trash", label: "Dimentica", size: 40) { client.forget(t.address); saved = client.saved() }
+                            BarIcon(icon: "trash", label: "Dimentica") { client.forget(t.address); saved = client.saved() }
                         }
                     }
                 }
@@ -163,7 +188,7 @@ struct RemoteView: View {
                 }
                 Text("OPPURE L'INDIRIZZO DELLA TV").font(NxFont.label).tracking(1).foregroundStyle(NxColor.textDim)
                 HStack {
-                    TextField("192.168.1.68", text: $manual).keyboardType(.numbersAndPunctuation).textFieldStyle(.roundedBorder).autocorrectionDisabled()
+                    NxField { TextField("", text: $manual, prompt: Text("192.168.1.68").foregroundColor(NxColor.textDim)).keyboardType(.numbersAndPunctuation).autocorrectionDisabled() }
                     NxButton("Collega", kind: .primary) { connect(manual.trimmed, name: "TV", token: nil) }.disabled(manual.trimmed.isEmpty)
                 }
             }
@@ -176,7 +201,7 @@ struct RemoteView: View {
             Image(systemName: "tv.and.mediabox").font(.system(size: 44)).foregroundStyle(NxColor.textMuted)
             Text("Scrivi il codice che vedi su \(pairingName)").font(NxFont.titleM).foregroundStyle(NxColor.text).multilineTextAlignment(.center)
             TextField("0000", text: $pin).keyboardType(.numberPad).font(NxFont.display(30, .bold)).multilineTextAlignment(.center).frame(maxWidth: 180)
-                .padding(10).background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .foregroundStyle(.white).tint(.white).padding(10).background(NxColor.ink3, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .onChange(of: pin) { _, v in if v.count > 4 { pin = String(v.prefix(4)) } }
             if let m = message { Text(m).font(NxFont.meta).foregroundStyle(NxColor.accentBright) }
             HStack(spacing: 10) {
@@ -202,24 +227,22 @@ struct RemoteView: View {
         Task { let r = await client.key(t, k); if r.status == 401 { tv = nil; message = "La TV chiede di abbinare di nuovo il telefono." } }
     }
 
-    private func key(_ t: RemoteClient.Tv, _ icon: String, _ k: String, size: CGFloat = 58) -> some View {
-        NxIconButton(icon: icon, label: k, size: size) { send(t, k) }
-    }
-
     /// Everything on one screen, without scrolling, on every phone: sizes follow the room there is.
     private func pad(_ t: RemoteClient.Tv) -> some View {
         GeometryReader { g in
             let u = min(g.size.width / 5.4, (g.size.height - 150) / 6.4)
             VStack(spacing: u * 0.26) {
                 HStack(spacing: 8) {
-                    TextField("Cerca sulla TV", text: $query).textFieldStyle(.roundedBorder).submitLabel(.search).autocorrectionDisabled()
-                        .onSubmit { let q = query.trimmed; if !q.isEmpty { Task { await client.search(t, q) }; query = "" } }
-                    NxIconButton(icon: "list.bullet", label: "Canali", size: 40) { showChannels = true; Task { channels = await client.channels(t) ?? channels } }
+                    NxField(icon: "magnifyingglass") {
+                        TextField("", text: $query, prompt: Text("Cerca sulla TV").foregroundColor(NxColor.textDim)).submitLabel(.search).autocorrectionDisabled()
+                            .onSubmit { let q = query.trimmed; if !q.isEmpty { Task { await client.search(t, q) }; query = "" } }
+                    }
+                    BarIcon(icon: "list.bullet", label: "Canali") { showChannelList(t) }
                 }
                 Spacer(minLength: 0)
                 HStack(spacing: u * 0.9) {
                     key(t, "arrow.uturn.backward", "back", size: u * 0.86)
-                    NxIconButton(icon: "house.fill", label: "Home", size: u * 0.86) { Task { await client.home(t) } }
+                    round("house.fill", "Home", u * 0.86) { Task { await client.home(t) } }
                     key(t, "line.3.horizontal", "menu", size: u * 0.86)
                 }
                 VStack(spacing: u * 0.12) {
@@ -227,7 +250,7 @@ struct RemoteView: View {
                     HStack(spacing: u * 0.12) {
                         key(t, "chevron.left", "left", size: u)
                         Button { send(t, "ok") } label: { Text("OK").font(Font.custom("Sora-Regular_Bold", fixedSize: u * 0.34)).foregroundStyle(NxColor.ink0).frame(width: u * 1.2, height: u * 1.2) }
-                            .buttonStyle(.plain).glassEffect(Glass.regular.tint(.white).interactive(), in: Circle())
+                            .background(Color.white, in: Circle()).buttonStyle(NxPlainStyle(scale: 0.92))
                         key(t, "chevron.right", "right", size: u)
                     }
                     key(t, "chevron.down", "down", size: u)
@@ -235,8 +258,8 @@ struct RemoteView: View {
                 HStack(spacing: u * 0.5) {
                     VStack(spacing: u * 0.12) {
                         if volume {
-                            NxIconButton(icon: "speaker.plus.fill", label: "Volume su", size: u * 0.8) { Task { await client.volume(t, "up") } }
-                            NxIconButton(icon: "speaker.minus.fill", label: "Volume giù", size: u * 0.8) { Task { await client.volume(t, "down") } }
+                            round("speaker.plus.fill", "Volume su", u * 0.8) { Task { await client.volume(t, "up") } }
+                            round("speaker.minus.fill", "Volume giù", u * 0.8) { Task { await client.volume(t, "down") } }
                         }
                     }
                     key(t, "playpause.fill", "playpause", size: u * 0.95)
@@ -246,30 +269,49 @@ struct RemoteView: View {
                     }
                 }
                 Spacer(minLength: 0)
-                Button("Cambia TV") { tv = nil }.font(NxFont.caption).foregroundStyle(NxColor.textDim).buttonStyle(.plain)
+                NxButton("Cambia TV", kind: .quiet) { tv = nil }
             }
             .padding(.horizontal, 18).padding(.vertical, 10)
             .frame(width: g.size.width, height: g.size.height)
         }
     }
 
-    private var channelSheet: some View {
-        OptionSheet(title: "Canali sulla TV") {
-            if channels.isEmpty { Text("Nessun canale: sulla TV scegli prima un profilo.").font(NxFont.meta).foregroundStyle(NxColor.textDim) }
-            ForEach(channels) { c in
-                OptionRow(title: (c.num > 0 ? "\(c.num)  " : "") + c.name, sub: c.now, selected: false) {
-                    showChannels = false
-                    if let t = tv { Task { await client.tune(t, id: c.id) } }
+    private func showChannelList(_ t: RemoteClient.Tv) {
+        Task {
+            channels = await client.channels(t) ?? channels
+            let list = channels
+            app.present("Canali sulla TV") {
+                LazyVStack(spacing: 0) {
+                    if list.isEmpty { Text("Nessun canale: sulla TV scegli prima un profilo.").font(NxFont.meta).foregroundStyle(NxColor.textDim).padding(20) }
+                    ForEach(list) { c in
+                        OptionRow(title: (c.num > 0 ? "\(c.num)  " : "") + c.name, sub: c.now) {
+                            app.dismissSheet()
+                            Task { await client.tune(t, id: c.id) }
+                        }
+                    }
                 }
             }
         }
+    }
+
+    private func round(_ icon: String, _ label: String, _ size: CGFloat, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon).font(.system(size: size * 0.38, weight: .semibold)).foregroundStyle(.white)
+                .frame(width: size, height: size).background(NxColor.ink3, in: Circle())
+        }
+        .buttonStyle(NxPlainStyle(scale: 0.9))
+        .accessibilityLabel(label)
+    }
+
+    private func key(_ t: RemoteClient.Tv, _ icon: String, _ k: String, size: CGFloat = 58) -> some View {
+        round(icon, k, size) { send(t, k) }
     }
 }
 #else
 struct RemoteView: View {
     var body: some View {
         StateMessage(icon: "appletvremote.gen4", title: "Telecomando dal telefono", text: "Apri NexStream sul telefono, poi Impostazioni e “Telecomando della TV”: questa Apple TV compare da sola. La prima volta mostro qui un codice.")
-            .nxPage().nxTitle("Telecomando")
+            .nxScreen("Telecomando")
     }
 }
 
@@ -375,7 +417,7 @@ struct RemotePairBanner: View {
                 Text(p.pin).font(NxFont.display(44, .heavy)).foregroundStyle(NxColor.text).monospacedDigit().tracking(8)
                 Text("Scrivi questo codice sul telefono.").font(NxFont.meta).foregroundStyle(NxColor.textMuted)
             }
-            .padding(40).nxGlassPanel()
+            .padding(40).nxPanel(fill: NxColor.ink3)
         }
     }
 }

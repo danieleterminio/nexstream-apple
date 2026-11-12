@@ -8,11 +8,11 @@ enum AppSection: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .search: return "Cerca"
         case .home: return "Home"
-        case .live: return "Canali"
+        case .live: return "Diretta"
         case .guide: return "Guida TV"
         case .movies: return "Film"
         case .series: return "Serie TV"
-        case .mine: return "I miei"
+        case .mine: return Metrics.tv ? "La mia lista" : "Il mio spazio"
         case .settings: return "Impostazioni"
         }
     }
@@ -20,12 +20,20 @@ enum AppSection: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .search: return "magnifyingglass"
         case .home: return "house.fill"
-        case .live: return "tv.fill"
+        case .live: return "play.tv.fill"
         case .guide: return "calendar"
         case .movies: return "film.fill"
-        case .series: return "play.rectangle.on.rectangle.fill"
-        case .mine: return "bookmark.fill"
+        case .series: return "tv.fill"
+        case .mine: return "plus"
         case .settings: return "gearshape.fill"
+        }
+    }
+    /// The symbol of a section that is not the one in view (phone bar).
+    var iconOff: String {
+        switch self {
+        case .home: return "house"
+        case .live: return "play.tv"
+        default: return icon
         }
     }
 }
@@ -44,9 +52,12 @@ enum Route: Hashable {
     case downloads
     case settings
     case mine
+    case search
+    /// The Film ("movie") or Serie TV ("tv") catalogue.
+    case vod(String)
 }
 
-/// What is playing full screen.
+/// What is playing.
 enum Playing: Identifiable, Hashable {
     /// Live channel; the list is what up/down zap through, in order.
     case live(String, [String])
@@ -57,6 +68,8 @@ enum Playing: Identifiable, Hashable {
         case .vod(let r): return "vod-\(r.id)"
         }
     }
+    /// A downloaded file: it plays without VPN and without network.
+    var isOffline: Bool { if case .vod(let r) = self { return r.localFile != nil }; return false }
 }
 
 /// Runs `body` on the main thread for every value of an `Observable`.
@@ -69,6 +82,8 @@ func onMain<T>(_ o: Observable<T>, _ body: @escaping (T) -> Void) -> Watch {
 /// App-wide UI state: the gates (VPN → line → profile), where the viewer is, what is playing.
 @MainActor
 final class AppModel: ObservableObject {
+    /// One model for the phone / TV screen and for the car screen.
+    static let shared = AppModel()
     let core = NexCore.shared
     let store: LiveStore
 
@@ -79,16 +94,21 @@ final class AppModel: ObservableObject {
     @Published var reminder: ReminderEntity? = nil
     @Published var section: AppSection = .home
     @Published var paths: [AppSection: [Route]] = [:]
-    @Published var playing: Playing? = nil
+    @Published private(set) var playing: Playing? = nil
+    /// The player behind `playing`: one of the two is set while something plays.
+    @Published private(set) var live: LivePlayerModel? = nil
+    @Published private(set) var vod: VodPlayerModel? = nil
+    /// iPhone: the player fills the screen in landscape (false = the portrait page with the video on top).
+    @Published var playerFull = false
     /// Taste picker to show right after a profile is created.
     @Published var onboardingFor: Int64? = nil
     /// "Gestisci i profili" opened from the profile picker.
     @Published var manageProfilesGate = false
     /// The downloads page opened from the VPN gate (what is downloaded plays without VPN and without network).
     @Published var offlineDownloads = false
-    /// A download playing from the VPN gate.
-    @Published var offlinePlaying: PlayRequest? = nil
     @Published var toast: String? = nil
+    /// Our own panels (menus, pickers, dialogs, editors), the last one on top.
+    @Published var sheets: [NxSheetItem] = []
     @Published var pendingSearch: String? = nil
     /// Bumped when the tab already on screen is tapped again (back to the top).
     @Published var reselect = 0
@@ -96,12 +116,17 @@ final class AppModel: ObservableObject {
     private var watches = [Watch]()
     private var autoTried = false
 
-    init() {
+    private init() {
         store = LiveStore(core: NexCore.shared)
         MetaRepository.logoLuminance = { ImageLoader.luminance($0) }
         _ = PlatformServices.shared
         core.start()
-        watches.append(onMain(Vpn.shared.active) { [weak self] v in self?.vpn = v })
+        watches.append(onMain(Vpn.shared.active) { [weak self] v in
+            guard let self = self else { return }
+            self.vpn = v
+            // nothing streams without the VPN: only a downloaded file may go on
+            if !v, let p = self.playing, !p.isOffline { self.closePlayer() }
+        })
         watches.append(onMain(core.session.current) { [weak self] s in self?.session = s })
         watches.append(onMain(core.profiles.current) { [weak self] p in
             guard let self = self else { return }
@@ -142,6 +167,7 @@ final class AppModel: ObservableObject {
                 if let c = core.channels.visible().first { play(c) }
             }
         }
+        if Demo.args.contains("-nxFull") { playerFull = true }
         if Demo.args.contains("-nxPlayVod") {
             Task {
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
@@ -165,15 +191,48 @@ final class AppModel: ObservableObject {
     /// Opens a live channel; zapping goes through `ids` (or every visible channel in number order).
     func play(_ c: ChannelEntity, ids: [String]? = nil) {
         let all = ids ?? store.zapOrder()
-        playing = .live(c.streamId, all.contains(c.streamId) ? all : [c.streamId] + all)
+        let list = all.contains(c.streamId) ? all : [c.streamId] + all
+        if let v = vod { v.close(); vod = nil }
+        if let l = live { l.switchTo(c.streamId, listIds: list) }
+        else {
+            PlatformServices.shared.playerOpened()
+            let m = LivePlayerModel(channelId: c.streamId, listIds: list)
+            m.player.onRestoreUI = { [weak self] in self?.playerHidden = false }
+            live = m
+            m.start()
+        }
+        playerHidden = false
+        playing = .live(c.streamId, list)
     }
-    func play(_ r: PlayRequest) { playing = .vod(r) }
-    /// Leaves whatever is playing full screen.
-    func closePlayer() { playing = nil; offlinePlaying = nil }
+    func play(_ r: PlayRequest) {
+        if let l = live { l.stop(); live = nil }
+        if let v = vod { v.close(); vod = nil }
+        PlatformServices.shared.playerOpened()
+        let m = VodPlayerModel(request: r, pid: pid)
+        m.onNext = { [weak self] n in self?.play(n) }
+        m.player.onRestoreUI = { [weak self] in self?.playerHidden = false }
+        vod = m
+        m.start()
+        playerHidden = false
+        playing = .vod(r)
+    }
+    /// Stops whatever is playing and leaves the player.
+    func closePlayer() {
+        live?.stop(); live = nil
+        vod?.close(); vod = nil
+        if playing != nil {
+            playing = nil
+            playerFull = false
+            NowPlaying.shared.clear()
+            PlatformServices.shared.playerClosed()
+        }
+    }
+    /// Started from the car screen: the phone keeps showing what it was showing.
+    @Published var playerHidden = false
     /// Back to the first page of Home (the phone remote's Home key).
     func goHome() { closePlayer(); paths = [:]; section = .home }
     /// "Riproduci" on a title: from where it was left, or the first episode.
-    func playTitle(_ d: TmdbDetails) { playing = .vod(core.resumeFor(pid, d)) }
+    func playTitle(_ d: TmdbDetails) { play(core.resumeFor(pid, d)) }
     func playTitle(_ t: TmdbTitle) {
         Task {
             if let d = try? await core.catalog.details(t.media, t.tmdbId) { playTitle(d) }

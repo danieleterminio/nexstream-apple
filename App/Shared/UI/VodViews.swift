@@ -132,59 +132,74 @@ final class VodHomeModel: ObservableObject {
 
 struct VodHomeView: View {
     let media: String
+    /// Opened as a page on the phone (from the pills of Home): it gets a back arrow.
+    var pushed = false
     @EnvironmentObject var app: AppModel
     @EnvironmentObject var store: LiveStore
     @StateObject private var model: VodHomeModel
 
-    init(media: String, pid: Int64, kids: Bool) {
+    init(media: String, pid: Int64, kids: Bool, pushed: Bool = false) {
         self.media = media
+        self.pushed = pushed
         _model = StateObject(wrappedValue: VodHomeModel(media: media, pid: pid, kids: kids))
+    }
+
+    private var vodOnly: HomeState {
+        var s = model.state
+        s.rows = s.rows.filter { if case .vod = $0 { return true }; return false }
+        return s
     }
 
     var body: some View {
         Group {
-            if model.state.rows.isEmpty && model.state.carousel.isEmpty {
-                BrandLoader(label: media == "tv" ? "Carico le serie TV…" : "Carico i film…").frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView(.vertical, showsIndicators: false) {
-                    LazyVStack(alignment: .leading, spacing: Metrics.rowGap) {
-                        if !model.state.carousel.isEmpty { HeroCarousel(items: model.state.carousel) }
-                        if !model.genres.isEmpty { genreStrip }
-                        ForEach(model.state.rows) { row in
-                            if case .vod(_, let title, let r, let overlays, let sub, let tag) = row { VodRowView(row: r, overlays: overlays, tag: tag, sub: sub, title: title) }
-                        }
-                        Color.clear.frame(height: 1).onAppear { model.loadMore() }
-                        Color.clear.frame(height: Metrics.u(24))
-                    }
+            #if os(iOS)
+            VStack(spacing: 0) {
+                NxTopBar(title: media == "tv" ? "Serie TV" : "Film", back: pushed, large: true) {
+                    BarIcon(icon: "magnifyingglass", label: "Cerca") { app.open(.search) }
                 }
-                #if os(iOS)
-                .ignoresSafeArea(edges: .top)
-                #endif
+                BrowsePage(state: vodOnly, emptyTitle: "Niente da mostrare", emptyText: "Controlla la connessione e riprova.",
+                           loadingLabel: media == "tv" ? "Carico le serie TV…" : "Carico i film…", onEnd: { model.loadMore() }) { genres }
             }
+            #else
+            BrowsePage(state: vodOnly, emptyTitle: "Niente da mostrare", emptyText: "Controlla la connessione e riprova.",
+                       loadingLabel: media == "tv" ? "Carico le serie TV…" : "Carico i film…", onEnd: { model.loadMore() }) { genres }
+            #endif
         }
         .nxPage()
         .onAppear { model.start(); model.refreshPersonal(listKeys: store.listKeys) }
         .onChange(of: store.listKeys) { _, k in model.refreshPersonal(listKeys: k) }
     }
 
-    private var genreStrip: some View {
-        VStack(alignment: .leading, spacing: Metrics.u(8)) {
-            SectionHeader(title: "Sfoglia per genere")
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: Metrics.u(8)) {
-                    ForEach(model.genres, id: \.0) { g in NxChip(title: g.1, selected: false) { app.open(.genre(media, g.0, g.1)) } }
+    @ViewBuilder private var genres: some View {
+        if !model.genres.isEmpty {
+            #if os(iOS)
+            HStack(spacing: 8) {
+                NxChip(title: "Generi", trailing: "chevron.down", selected: false) {
+                    app.menu(media == "tv" ? "Generi delle serie TV" : "Generi dei film", model.genres.map { g in NxAction(g.1) { app.open(.genre(media, g.0, g.1)) } })
                 }
-                .padding(.horizontal, Metrics.gutter)
-                #if os(tvOS)
-                .padding(.vertical, 14)
-                #endif
+                if media == "movie" { NxChip(title: "Serie TV", selected: false) { if pushed { app.pop() }; app.open(.vod("tv")) } }
+                else { NxChip(title: "Film", selected: false) { if pushed { app.pop() }; app.open(.vod("movie")) } }
+                Spacer(minLength: 0)
             }
-            .scrollClipDisabled()
+            .padding(.horizontal, Metrics.gutter).padding(.vertical, 4)
+            #else
+            VStack(alignment: .leading, spacing: 8) {
+                SectionHeader(title: "Sfoglia per genere")
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 14) {
+                        ForEach(model.genres, id: \.0) { g in NxChip(title: g.1, selected: false) { app.open(.genre(media, g.0, g.1)) } }
+                    }
+                    .padding(.horizontal, Metrics.gutter).padding(.vertical, 12)
+                }
+                .scrollClipDisabled()
+                .focusSection()
+            }
+            #endif
         }
     }
 }
 
-/// "Sfoglia per genere": the rows of one genre.
+/// "Generi": the rows of one genre.
 struct GenreView: View {
     let media: String
     let genreId: Int
@@ -206,8 +221,7 @@ struct GenreView: View {
                 }
             } else { BrandLoader(label: name).frame(maxWidth: .infinity, maxHeight: .infinity) }
         }
-        .nxPage()
-        .nxTitle((media == "tv" ? "Serie TV · " : "Film · ") + name)
+        .nxScreen((media == "tv" ? "Serie TV · " : "Film · ") + name)
         .task { if rows == nil { rows = await app.core.catalog.genreRows(media, genreId, name, app.kids) } }
     }
 }
@@ -265,13 +279,14 @@ final class TitleDetailModel: ObservableObject {
     func progress(for e: TmdbEpisode) -> ProgressEntity? { progress.first { $0.season == e.seasonNumber && $0.episode == e.episodeNumber } }
 }
 
-/// The page of a film or a series: what it is, the one button to play it from where it was left, episodes, where it is on
-/// TV in the next days, similar titles.
+/// The page of a film or a series: the artwork, the one button to play it from where it was left, what it is, the
+/// episodes, where it is on TV in the next days, similar titles.
 struct TitleDetailView: View {
     @EnvironmentObject var app: AppModel
     @EnvironmentObject var store: LiveStore
     @StateObject private var model: TitleDetailModel
     @State private var more = false
+    @State private var tab = 0
 
     init(media: String, tmdbId: Int) { _model = StateObject(wrappedValue: TitleDetailModel(media: media, id: tmdbId)) }
 
@@ -282,11 +297,12 @@ struct TitleDetailView: View {
             else { BrandLoader().frame(maxWidth: .infinity, maxHeight: .infinity) }
         }
         .nxPage()
-        .task { await model.load(pid: app.pid, kids: app.kids) }
         #if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .tabBar)
+        .overlay(alignment: .topLeading) {
+            NxIconButton(icon: "chevron.left", label: "Indietro", size: 36) { app.pop() }.padding(.leading, 10).padding(.top, 6)
+        }
         #endif
+        .task { await model.load(pid: app.pid, kids: app.kids) }
     }
 
     private func resumeLabel(_ d: TmdbDetails) -> String {
@@ -296,136 +312,50 @@ struct TitleDetailView: View {
         return l.completed ? "Riproduci S\(l.season) E\(l.episode + 1)" : "Riprendi S\(l.season) E\(l.episode)"
     }
 
-    @ViewBuilder private func page(_ d: TmdbDetails) -> some View {
-        let t = d.toTitle()
-        let inList = store.listKeys.contains(t.key)
-        ScrollView(.vertical, showsIndicators: false) {
-            LazyVStack(alignment: .leading, spacing: Metrics.u(18)) {
-                ZStack(alignment: .bottomLeading) {
-                    NxImage(url: Img.tmdb(d.bestBackdrop ?? d.posterPath, "w1280"), maxPixel: Metrics.tv ? 1920 : 1400, alignment: .top) { NxColor.ink2 }
-                        .frame(maxWidth: .infinity).frame(height: Metrics.tv ? 600 : 300).clipped()
-                    #if os(tvOS)
-                    NxColor.heroScrim
-                    #endif
-                    NxColor.heroFade
-                    VStack(alignment: .leading, spacing: Metrics.u(8)) {
-                        if let logo = Img.tmdb(d.logoPath, "w500") {
-                            NxImage(url: logo, fit: true, maxPixel: 700, alignment: .bottomLeading) { Text(d.displayTitle).font(NxFont.hero).foregroundStyle(.white) }
-                                .frame(maxWidth: Metrics.u(240), maxHeight: Metrics.u(80), alignment: .bottomLeading)
-                        } else { Text(d.displayTitle).font(NxFont.hero).foregroundStyle(.white).lineLimit(3) }
-                    }
-                    .padding(.horizontal, Metrics.gutter).padding(.bottom, Metrics.u(6))
-                }
-                VStack(alignment: .leading, spacing: Metrics.u(10)) {
-                    HStack(spacing: Metrics.u(8)) {
-                        if model.match > 0 { Text("\(model.match)% per te").font(NxFont.ui(13, .bold)).foregroundStyle(NxColor.success) }
-                        if d.year > 0 { Text(String(d.year)).font(NxFont.meta).foregroundStyle(NxColor.textMuted) }
-                        if let c = d.certification { NxTag(text: c) }
-                        if d.isTv { Text("\(d.numberOfSeasons) stagion\(d.numberOfSeasons == 1 ? "e" : "i") · \(d.numberOfEpisodes) episodi").font(NxFont.meta).foregroundStyle(NxColor.textMuted) }
-                        else if d.runtimeMin > 0 { Text(TimeText.duration(minutes: d.runtimeMin)).font(NxFont.meta).foregroundStyle(NxColor.textMuted) }
-                        if d.voteAverage > 0 { Text(String(format: "★ %.1f", d.voteAverage)).font(NxFont.meta).foregroundStyle(NxColor.gold) }
-                    }
-                    actions(d, t, inList)
-                    if let l = model.progress.first, !l.completed, l.durationMs > 0 {
-                        HStack(spacing: Metrics.u(8)) {
-                            NxProgressBar(value: Double(l.positionMs) / Double(l.durationMs)).frame(maxWidth: Metrics.u(200))
-                            Text("mancano \(max(1, Int((l.durationMs - l.positionMs) / Clock.minute))) min").font(NxFont.caption).foregroundStyle(NxColor.textDim)
-                        }
-                    }
-                    if let tag = d.tagline?.nilIfBlank { Text(tag).font(NxFont.bodyStrong).foregroundStyle(NxColor.text) }
-                    if let o = d.overview?.nilIfBlank {
-                        Text(o).font(NxFont.body).foregroundStyle(NxColor.textMuted).lineLimit(more ? nil : 4)
-                        #if os(iOS)
-                        if !more && o.count > 180 { Button("Altro") { more = true }.font(NxFont.label).foregroundStyle(NxColor.text).buttonStyle(.plain) }
-                        #endif
-                    }
-                    Text(d.genres.map { $0.name }.joined(separator: " · ")).font(NxFont.caption).foregroundStyle(NxColor.textDim)
-                    if !d.cast.isEmpty { Text("Con " + d.cast.prefix(more ? 12 : 5).map { $0.name }.joined(separator: ", ")).font(NxFont.caption).foregroundStyle(NxColor.textDim).lineLimit(2) }
-                    if let dir = d.directors.first ?? d.createdBy?.first { Text((d.isTv ? "Creata da " : "Regia di ") + dir.name).font(NxFont.caption).foregroundStyle(NxColor.textDim) }
-                }
-                .padding(.horizontal, Metrics.gutter)
-                .frame(maxWidth: Metrics.tv ? 1200 : .infinity, alignment: .leading)
-
-                if d.isTv { episodesSection(d) }
-                if !model.airings.isEmpty {
-                    CardRow(title: "In TV nei prossimi giorni", items: model.airings) { s in
-                        ShowCard(showing: s, style: .compact, reminder: store.reminders.contains(s.channel.streamId),
-                                 onTap: { app.openShowing(s) }, onPlay: { app.play(s.channel) }, onReminder: { app.toggleReminder(s) })
-                    }
-                }
-                if model.similar.count >= 4 { VodRowView(row: VodRow(id: "similar", title: "Titoli simili", items: model.similar)) }
-                Color.clear.frame(height: Metrics.u(30))
-            }
-        }
-        #if os(iOS)
-        .ignoresSafeArea(edges: .top)
-        #endif
-    }
-
-    @ViewBuilder private func actions(_ d: TmdbDetails, _ t: TmdbTitle, _ inList: Bool) -> some View {
-        let last = model.progress.first
-        let row1 = HStack(spacing: Metrics.u(10)) {
-            NxButton(resumeLabel(d), icon: "play.fill", kind: .primary, wide: !Metrics.tv) { app.playTitle(d) }
-            #if os(tvOS)
-            if last != nil { NxButton("Ricomincia", icon: "arrow.counterclockwise") { restart(d) } }
-            #endif
-        }
-        let row2 = HStack(spacing: Metrics.u(10)) {
-            #if os(iOS)
-            if last != nil { NxIconButton(icon: "arrow.counterclockwise", label: "Ricomincia") { restart(d) } }
-            #endif
-            NxIconButton(icon: inList ? "bookmark.fill" : "bookmark", label: "Da guardare", active: inList) { app.toggleList(t) }
-            NxIconButton(icon: model.feedback == "liked" ? "hand.thumbsup.fill" : "hand.thumbsup", label: "Mi piace", active: model.feedback == "liked") {
-                app.core.library.setFeedback(app.pid, d.id, d.media, current: model.feedback, want: "liked")
-            }
-            NxIconButton(icon: model.feedback == "disliked" ? "hand.thumbsdown.fill" : "hand.thumbsdown", label: "Non mi piace", active: model.feedback == "disliked") {
-                app.core.library.setFeedback(app.pid, d.id, d.media, current: model.feedback, want: "disliked")
-            }
-            if !d.isTv {
-                NxIconButton(icon: last?.completed == true ? "checkmark.circle.fill" : "checkmark.circle", label: "Segna come visto", active: last?.completed == true) {
-                    if last?.completed == true { app.core.library.clearProgress(app.pid, d.id, d.media) }
-                    else { app.core.library.markWatched(app.pid, d.id, d.media, season: 0, episode: 0, runtimeMin: d.runtimeMin) }
-                }
-            }
-            #if os(iOS)
-            if !d.isTv { DownloadButton(request: PlayRequest(details: d)) }
-            #endif
-            Spacer(minLength: 0)
-        }
-        if Metrics.tv { HStack(spacing: Metrics.u(10)) { row1; row2 } } else { VStack(alignment: .leading, spacing: Metrics.u(10)) { row1; row2 } }
-    }
-
     private func restart(_ d: TmdbDetails) {
         if d.isTv { app.play(PlayRequest(details: d, season: 1, episode: 1)) } else { app.play(PlayRequest(details: d, startMs: 0)) }
     }
 
-    @ViewBuilder private func episodesSection(_ d: TmdbDetails) -> some View {
-        let seasons = d.seasons.filter { $0.seasonNumber > 0 }
-        VStack(alignment: .leading, spacing: Metrics.u(10)) {
-            SectionHeader(title: "Episodi")
-            if seasons.count > 1 {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: Metrics.u(8)) {
-                        ForEach(seasons, id: \.seasonNumber) { s in
-                            NxChip(title: "Stagione \(s.seasonNumber)", selected: model.season == s.seasonNumber) { Task { await model.loadSeason(s.seasonNumber) } }
-                        }
-                    }
-                    .padding(.horizontal, Metrics.gutter)
-                    #if os(tvOS)
-                    .padding(.vertical, 14)
-                    #endif
-                }
-                .scrollClipDisabled()
+    private func metaLine(_ d: TmdbDetails) -> some View {
+        HStack(spacing: Metrics.u(8)) {
+            if model.match > 0 { Text("\(model.match)% per te").font(NxFont.ui(13, .heavy)).foregroundStyle(NxColor.success) }
+            if d.year > 0 { Text(String(d.year)).font(NxFont.meta).foregroundStyle(NxColor.textMuted) }
+            if let c = d.certification { NxTag(text: c) }
+            if d.isTv { Text(d.numberOfSeasons == 1 ? "1 stagione" : "\(d.numberOfSeasons) stagioni").font(NxFont.meta).foregroundStyle(NxColor.textMuted) }
+            else if d.runtimeMin > 0 { Text(TimeText.duration(minutes: d.runtimeMin)).font(NxFont.meta).foregroundStyle(NxColor.textMuted) }
+            if d.voteAverage > 0 { Text(String(format: "★ %.1f", d.voteAverage)).font(NxFont.meta).foregroundStyle(NxColor.gold) }
+        }
+    }
+
+    @ViewBuilder private func credits(_ d: TmdbDetails) -> some View {
+        if !d.cast.isEmpty {
+            (Text("Cast: ").foregroundColor(NxColor.textDim) + Text(d.cast.prefix(more ? 8 : 4).map { $0.name }.joined(separator: ", ")).foregroundColor(NxColor.textMuted))
+                .font(NxFont.caption).lineLimit(more ? 4 : 1)
+        }
+        if let dir = d.directors.first ?? d.createdBy?.first {
+            (Text(d.isTv ? "Creata da: " : "Regia: ").foregroundColor(NxColor.textDim) + Text(dir.name).foregroundColor(NxColor.textMuted)).font(NxFont.caption).lineLimit(1)
+        }
+        if !d.genres.isEmpty {
+            (Text("Generi: ").foregroundColor(NxColor.textDim) + Text(d.genres.map { $0.name }.joined(separator: ", ")).foregroundColor(NxColor.textMuted)).font(NxFont.caption).lineLimit(1)
+        }
+    }
+
+    @ViewBuilder private func secondary(_ d: TmdbDetails, _ t: TmdbTitle) -> some View {
+        let last = model.progress.first
+        let inList = store.listKeys.contains(t.key)
+        NxIconAction(icon: inList ? "checkmark" : "plus", label: "La mia lista", active: inList) { app.toggleList(t) }
+        NxIconAction(icon: model.feedback == "liked" ? "hand.thumbsup.fill" : "hand.thumbsup", label: "Mi piace", active: model.feedback == "liked") {
+            app.core.library.setFeedback(app.pid, d.id, d.media, current: model.feedback, want: "liked")
+        }
+        NxIconAction(icon: model.feedback == "disliked" ? "hand.thumbsdown.fill" : "hand.thumbsdown", label: "Non fa per me", active: model.feedback == "disliked") {
+            app.core.library.setFeedback(app.pid, d.id, d.media, current: model.feedback, want: "disliked")
+        }
+        if last != nil { NxIconAction(icon: "arrow.counterclockwise", label: "Ricomincia") { restart(d) } }
+        if !d.isTv {
+            NxIconAction(icon: last?.completed == true ? "checkmark.circle.fill" : "checkmark.circle", label: last?.completed == true ? "Visto" : "Segna visto", active: last?.completed == true) {
+                if last?.completed == true { app.core.library.clearProgress(app.pid, d.id, d.media) }
+                else { app.core.library.markWatched(app.pid, d.id, d.media, season: 0, episode: 0, runtimeMin: d.runtimeMin) }
             }
-            #if os(tvOS)
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(alignment: .top, spacing: Metrics.cardGap) { ForEach(model.episodes) { e in episodeCard(d, e) } }
-                    .padding(.horizontal, Metrics.gutter).padding(.vertical, 28)
-            }
-            .scrollClipDisabled().focusSection()
-            #else
-            LazyVStack(spacing: 10) { ForEach(model.episodes) { e in episodeRow(d, e) } }.padding(.horizontal, Metrics.gutter)
-            #endif
         }
     }
 
@@ -434,68 +364,219 @@ struct TitleDetailView: View {
         return PlayRequest(details: d, season: e.seasonNumber, episode: e.episodeNumber, episodeTitle: e.name, startMs: (p != nil && !p!.completed) ? p!.positionMs : 0)
     }
 
-    @ViewBuilder private func episodeMenu(_ d: TmdbDetails, _ e: TmdbEpisode) -> some View {
+    private func episodeMenu(_ d: TmdbDetails, _ e: TmdbEpisode) {
         let done = model.progress(for: e)?.completed == true
-        Button {
-            if done { app.core.library.markUnwatched(app.pid, d.id, d.media, season: e.seasonNumber, episode: e.episodeNumber) }
-            else { app.core.library.markWatched(app.pid, d.id, d.media, season: e.seasonNumber, episode: e.episodeNumber, runtimeMin: e.runtime ?? d.runtimeMin) }
-        } label: { Label(done ? "Segna come non visto" : "Segna come visto", systemImage: done ? "circle" : "checkmark.circle") }
+        app.menu("\(e.episodeNumber). \(e.name ?? "Episodio")", [
+            NxAction("Riproduci", icon: "play.fill") { app.play(request(d, e)) },
+            NxAction(done ? "Segna come non visto" : "Segna come visto", icon: done ? "circle" : "checkmark.circle") {
+                if done { app.core.library.markUnwatched(app.pid, d.id, d.media, season: e.seasonNumber, episode: e.episodeNumber) }
+                else { app.core.library.markWatched(app.pid, d.id, d.media, season: e.seasonNumber, episode: e.episodeNumber, runtimeMin: e.runtime ?? d.runtimeMin) }
+            },
+        ])
     }
 
     private func still(_ e: TmdbEpisode, _ w: CGFloat) -> some View {
         let p = model.progress(for: e)
-        return ZStack(alignment: .bottomLeading) {
+        return ZStack(alignment: .bottom) {
             NxImage(url: Img.tmdb(e.stillPath, "w300"), maxPixel: 500) { NxColor.ink3 }
-            NxColor.cardFade.opacity(0.7)
-            VStack(alignment: .leading, spacing: Metrics.u(4)) {
-                HStack {
-                    Spacer()
-                    if p?.completed == true { Image(systemName: "checkmark.circle.fill").font(.system(size: 14 * Metrics.type)).foregroundStyle(.white) }
-                }
-                Spacer(minLength: 0)
-                HStack(alignment: .bottom) {
-                    Text("\(e.episodeNumber)").font(NxFont.display(18, .bold)).foregroundStyle(.white)
-                    Spacer()
-                    if let r = e.runtime { Text("\(r) min").font(NxFont.caption).foregroundStyle(NxColor.textMuted) }
-                }
-                if let pr = p, !pr.completed, pr.durationMs > 0 { NxProgressBar(value: Double(pr.positionMs) / Double(pr.durationMs)) }
-            }
-            .padding(Metrics.u(7))
+            Image(systemName: p?.completed == true ? "checkmark" : "play.fill").font(.system(size: 12 * Metrics.unit, weight: .bold)).foregroundStyle(.white)
+                .frame(width: Metrics.u(30), height: Metrics.u(30))
+                .background(Color.black.opacity(0.55), in: Circle())
+                .overlay(Circle().stroke(Color.white.opacity(0.9), lineWidth: 1))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if let pr = p, !pr.completed, pr.durationMs > 0 { NxProgressBar(value: Double(pr.positionMs) / Double(pr.durationMs)) }
         }
         .frame(width: w, height: w * 9 / 16)
-        .clipShape(RoundedRectangle(cornerRadius: Metrics.radius * 0.8, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Metrics.radius, style: .continuous))
+    }
+
+    private func seasonPill(_ d: TmdbDetails) -> some View {
+        let seasons = d.seasons.filter { $0.seasonNumber > 0 }
+        return Group {
+            if seasons.count > 1 {
+                NxChip(title: "Stagione \(model.season)", trailing: "chevron.down", selected: false) {
+                    app.choose("Stagioni", seasons.map { ($0.seasonNumber, "Stagione \($0.seasonNumber)" + ($0.episodeCount.map { " · \($0) episodi" } ?? "")) }, current: model.season) { s in
+                        Task { await model.loadSeason(s) }
+                    }
+                }
+            } else { Text("Stagione \(model.season)").font(NxFont.ui(14, .bold)).foregroundStyle(NxColor.textMuted) }
+        }
+    }
+
+    #if os(iOS)
+    @ViewBuilder private func page(_ d: TmdbDetails) -> some View {
+        let t = d.toTitle()
+        let last = model.progress.first
+        ScrollView(.vertical, showsIndicators: false) {
+            LazyVStack(alignment: .leading, spacing: 14) {
+                Button { app.playTitle(d) } label: {
+                    ZStack {
+                        NxImage(url: Img.tmdb(d.bestBackdrop ?? d.posterPath, "w1280"), maxPixel: 1400, alignment: .top) { NxColor.ink2 }
+                        LinearGradient(colors: [.clear, .black.opacity(0.5)], startPoint: .center, endPoint: .bottom)
+                        Image(systemName: "play.fill").font(.system(size: 22, weight: .bold)).foregroundStyle(.white)
+                            .frame(width: 58, height: 58).background(Color.black.opacity(0.5), in: Circle()).overlay(Circle().stroke(Color.white, lineWidth: 1.5))
+                    }
+                    .frame(maxWidth: .infinity).aspectRatio(16 / 9, contentMode: .fit).clipped()
+                }
+                .buttonStyle(NxPlainStyle(scale: 1))
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(d.displayTitle).font(NxFont.display(23, .bold)).foregroundStyle(.white).lineLimit(3)
+                    metaLine(d)
+                    NxButton(resumeLabel(d), icon: "play.fill", kind: .primary, wide: true) { app.playTitle(d) }
+                    if !d.isTv { DownloadButton(request: PlayRequest(details: d), wide: true) }
+                    if let l = last, !l.completed, l.durationMs > 0 {
+                        HStack(spacing: 8) {
+                            NxProgressBar(value: Double(l.positionMs) / Double(l.durationMs))
+                            Text("mancano \(max(1, Int((l.durationMs - l.positionMs) / Clock.minute))) min").font(NxFont.caption).foregroundStyle(NxColor.textDim).fixedSize()
+                        }
+                    }
+                    if let o = d.overview?.nilIfBlank {
+                        Text(o).font(NxFont.ui(14)).foregroundStyle(.white).lineLimit(more ? nil : 3)
+                            .contentShape(Rectangle()).onTapGesture { withAnimation(.easeOut(duration: 0.15)) { more.toggle() } }
+                    }
+                    credits(d)
+                    HStack(alignment: .top, spacing: 4) { secondary(d, t); Spacer(minLength: 0) }.padding(.top, 2).padding(.leading, -10)
+                }
+                .padding(.horizontal, Metrics.gutter)
+                tabs(d)
+                Color.clear.frame(height: 20)
+            }
+        }
+    }
+
+    private func tabNames(_ d: TmdbDetails) -> [(Int, String)] {
+        var out = [(Int, String)]()
+        if d.isTv { out.append((0, "Episodi")) }
+        if model.similar.count >= 3 { out.append((1, "Simili")) }
+        if !model.airings.isEmpty { out.append((2, "In TV")) }
+        return out
+    }
+
+    @ViewBuilder private func tabs(_ d: TmdbDetails) -> some View {
+        let names = tabNames(d)
+        let current = names.contains { $0.0 == tab } ? tab : (names.first?.0 ?? -1)
+        if !names.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(spacing: 0) {
+                    Rectangle().fill(NxColor.ink4).frame(height: 1)
+                    HStack(spacing: 22) {
+                        ForEach(names, id: \.0) { n in
+                            Button { tab = n.0 } label: {
+                                VStack(spacing: 8) {
+                                    Rectangle().fill(current == n.0 ? NxColor.accent : Color.clear).frame(height: 4)
+                                    Text(n.1).font(NxFont.ui(15, .heavy)).foregroundStyle(current == n.0 ? Color.white : NxColor.textDim)
+                                }
+                                .fixedSize()
+                            }
+                            .buttonStyle(NxPlainStyle(scale: 1))
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, Metrics.gutter)
+                }
+                switch current {
+                case 0:
+                    seasonPill(d).padding(.horizontal, Metrics.gutter)
+                    LazyVStack(spacing: 16) { ForEach(model.episodes) { e in episodeRow(d, e) } }.padding(.horizontal, Metrics.gutter)
+                case 1:
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                        ForEach(model.similar.prefix(18)) { s in
+                            GeometryReader { g in PosterCard(title: s, inList: store.listKeys.contains(s.key), width: g.size.width) { app.openTitle(s) } }
+                                .aspectRatio(2 / 3, contentMode: .fit)
+                        }
+                    }
+                    .padding(.horizontal, Metrics.gutter)
+                default:
+                    VStack(spacing: 0) {
+                        ForEach(model.airings) { s in ChannelLine(showing: s, favorite: false) { app.openShowing(s) } }
+                    }
+                }
+            }
+        }
+    }
+
+    private func episodeRow(_ d: TmdbDetails, _ e: TmdbEpisode) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .center, spacing: 12) {
+                CardButton(action: { app.play(request(d, e)) }, onLong: { episodeMenu(d, e) }) {
+                    HStack(spacing: 12) {
+                        still(e, 124)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("\(e.episodeNumber). \(e.name ?? "Episodio \(e.episodeNumber)")").font(NxFont.ui(14, .bold)).foregroundStyle(.white).lineLimit(2).multilineTextAlignment(.leading)
+                            if let r = e.runtime { Text("\(r) min").font(NxFont.caption).foregroundStyle(NxColor.textDim) }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                DownloadButton(request: PlayRequest(details: d, season: e.seasonNumber, episode: e.episodeNumber, episodeTitle: e.name))
+            }
+            if let o = e.overview?.nilIfBlank { Text(o).font(NxFont.ui(12, .medium)).foregroundStyle(NxColor.textMuted).lineLimit(3) }
+        }
+    }
+    #else
+    @ViewBuilder private func page(_ d: TmdbDetails) -> some View {
+        let t = d.toTitle()
+        let last = model.progress.first
+        ZStack(alignment: .topLeading) {
+            NxImage(url: Img.tmdb(d.bestBackdrop ?? d.posterPath, "w1280"), maxPixel: 1920, alignment: .top) { NxColor.bg }
+                .frame(width: 1240, height: 698).overlay(NxColor.heroScrim).overlay(NxColor.heroFade)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(alignment: .leading, spacing: 30) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        if let logo = Img.tmdb(d.logoPath, "w500") {
+                            NxImage(url: logo, fit: true, maxPixel: 800, alignment: .bottomLeading) { Text(d.displayTitle).font(NxFont.display(34, .heavy)).foregroundStyle(.white) }
+                                .frame(maxWidth: 520, maxHeight: 170, alignment: .bottomLeading)
+                        } else { Text(d.displayTitle).font(NxFont.display(34, .heavy)).foregroundStyle(.white).lineLimit(2) }
+                        metaLine(d)
+                        if let o = d.overview?.nilIfBlank { Text(o).font(NxFont.ui(14, .medium)).foregroundStyle(.white).lineLimit(4).frame(maxWidth: 820, alignment: .leading) }
+                        VStack(alignment: .leading, spacing: 4) { credits(d) }.frame(maxWidth: 820, alignment: .leading)
+                        if let l = last, !l.completed, l.durationMs > 0 {
+                            HStack(spacing: 14) {
+                                NxProgressBar(value: Double(l.positionMs) / Double(l.durationMs)).frame(width: 360)
+                                Text("mancano \(max(1, Int((l.durationMs - l.positionMs) / Clock.minute))) min").font(NxFont.caption).foregroundStyle(NxColor.textDim)
+                            }
+                        }
+                        HStack(spacing: 18) {
+                            NxButton(resumeLabel(d), icon: "play.fill", kind: .primary) { app.playTitle(d) }
+                            secondary(d, t)
+                        }
+                        .padding(.top, 8)
+                        .focusSection()
+                    }
+                    .padding(.horizontal, Metrics.gutter).padding(.top, 90)
+                    if d.isTv {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 20) { Text("Episodi").font(NxFont.rowTitle).foregroundStyle(.white); seasonPill(d) }.padding(.horizontal, Metrics.gutter).focusSection()
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                LazyHStack(alignment: .top, spacing: Metrics.cardGap) { ForEach(model.episodes) { e in episodeCard(d, e) } }
+                                    .padding(.horizontal, Metrics.gutter).padding(.vertical, 22)
+                            }
+                            .scrollClipDisabled().focusSection()
+                        }
+                    }
+                    if !model.airings.isEmpty {
+                        CardRow(title: "In TV nei prossimi giorni", items: model.airings) { s in
+                            ShowCard(showing: s, style: .compact, reminder: store.reminders.contains(s.channel.streamId)) { app.openShowing(s) }
+                        }
+                    }
+                    if model.similar.count >= 4 { VodRowView(row: VodRow(id: "similar", title: "Titoli simili", items: model.similar)) }
+                    Color.clear.frame(height: 60)
+                }
+            }
+        }
+        .ignoresSafeArea()
     }
 
     private func episodeCard(_ d: TmdbDetails, _ e: TmdbEpisode) -> some View {
         let w = Metrics.showCardW * 0.9
-        return CardButton(action: { app.play(request(d, e)) }) {
-            VStack(alignment: .leading, spacing: 8) {
-                still(e, w)
-                Text(e.name ?? "Episodio \(e.episodeNumber)").font(NxFont.ui(14, .semibold)).foregroundStyle(NxColor.text).lineLimit(1)
-                Text(e.overview ?? " ").font(NxFont.caption).foregroundStyle(NxColor.textDim).lineLimit(3)
-            }
-            .frame(width: w, alignment: .leading).padding(12)
+        return VStack(alignment: .leading, spacing: 10) {
+            CardButton(action: { app.play(request(d, e)) }) { still(e, w) }
+            Text("\(e.episodeNumber). \(e.name ?? "Episodio \(e.episodeNumber)")").font(NxFont.ui(13, .bold)).foregroundStyle(NxColor.text).lineLimit(1)
+            Text(e.overview ?? " ").font(NxFont.ui(11, .medium)).foregroundStyle(NxColor.textDim).lineLimit(3)
         }
-        .contextMenu { episodeMenu(d, e) }
+        .frame(width: w, alignment: .leading)
     }
-
-    private func episodeRow(_ d: TmdbDetails, _ e: TmdbEpisode) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Button { app.play(request(d, e)) } label: {
-                HStack(alignment: .top, spacing: 12) {
-                    still(e, 132)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(e.name ?? "Episodio \(e.episodeNumber)").font(NxFont.ui(14, .semibold)).foregroundStyle(NxColor.text).lineLimit(2).multilineTextAlignment(.leading)
-                        Text(e.overview ?? "").font(NxFont.caption).foregroundStyle(NxColor.textDim).lineLimit(3).multilineTextAlignment(.leading)
-                    }
-                    Spacer(minLength: 0)
-                }
-            }
-            .buttonStyle(PressScaleStyle())
-            #if os(iOS)
-            DownloadButton(request: PlayRequest(details: d, season: e.seasonNumber, episode: e.episodeNumber, episodeTitle: e.name), compact: true)
-            #endif
-        }
-        .contextMenu { episodeMenu(d, e) }
-    }
+    #endif
 }
