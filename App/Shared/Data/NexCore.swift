@@ -57,6 +57,10 @@ final class NexCore {
     var xtream: XtreamClient? { session.current.value.map { XtreamClient(base: $0.base, username: $0.username, password: $0.password) } }
 
     private init() {
+        // a player that hangs up on a local stream (the add-on's proxy, our live proxy) must not end the app
+        #if !os(Windows)
+        signal(SIGPIPE, SIG_IGN)
+        #endif
         let url = Paths.support.appendingPathComponent("nexstream.sqlite")
         var opened: AppDB? = try? AppDB(url: url)
         if opened == nil {

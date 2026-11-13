@@ -3,7 +3,7 @@ import Foundation
 /// App log: console + a rolling file in Caches (`nx.log`) that the CI pulls out of the simulator after a run.
 enum NxLog {
     private static let queue = DispatchQueue(label: "nx.log")
-    private static let url: URL = Paths.caches.appendingPathComponent("nx.log")
+    static let url: URL = Paths.caches.appendingPathComponent("nx.log")
     private static var handle: FileHandle? = {
         let fm = FileManager.default
         if let size = (try? fm.attributesOfItem(atPath: url.path))?[.size] as? Int, size > 2_000_000 { try? fm.removeItem(at: url) }

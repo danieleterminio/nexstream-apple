@@ -322,6 +322,24 @@ struct SettingsView: View {
                 SettingRow(icon: "rectangle.portrait.and.arrow.right", title: "Esci dalla linea", sub: "Dovrai inserire di nuovo nome utente e password.", destructive: true, chevron: false) {
                     app.confirm("Uscire dalla linea?", message: "La linea verrà scollegata da questo dispositivo. Profili e preferiti restano.", confirm: "Esci", destructive: true) { core.logout() }
                 }
+                #if os(iOS)
+                OptionHeader(title: "Assistenza")
+                ShareLink(item: NxLog.url, preview: SharePreview("Registro di NexStream")) {
+                    HStack(spacing: Metrics.u(13)) {
+                        Image(systemName: "doc.text.magnifyingglass").font(.system(size: 17, weight: .medium)).frame(width: 26).foregroundStyle(NxColor.textMuted)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Invia il registro").font(NxFont.ui(15, .bold)).foregroundStyle(.white)
+                            Text("Cosa ha fatto l'app nelle ultime ore: serve a capire un problema.").font(NxFont.caption).foregroundStyle(NxColor.textDim)
+                        }
+                        Spacer(minLength: 8)
+                        Image(systemName: "square.and.arrow.up").font(.system(size: 14, weight: .bold)).foregroundStyle(NxColor.textDim)
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(NxColor.ink2, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+                .buttonStyle(NxPlainStyle(scale: 0.99))
+                #endif
                 Text("NexStream \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")").font(NxFont.caption).foregroundStyle(NxColor.textDim).padding(.vertical, Metrics.u(16))
             }
             .padding(.horizontal, Metrics.gutter)

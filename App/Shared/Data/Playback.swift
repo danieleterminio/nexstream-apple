@@ -49,10 +49,16 @@ final class PlaybackResolver {
         onStatus("Cerco le sorgenti…")
         let queries = [d.displayTitle, d.originalDisplayTitle].map { $0.trimmed }.filter { !$0.isBlank }.distinct
         var seenItems = Set<String>()
-        for q in queries {
-            guard let resp = try? await engine.search(q, type: type, year: d.year) else { continue }
-            NxLog.i("NxResolver", "search \"\(q)\": \(resp.hits.count) results in \(resp.elapsed ?? 0)s; top=\(resp.hits.prefix(3).map { "\($0.channel):\($0.title):\($0.scoreValue)" })")
-            let hits = resp.hits.filter { $0.scoreValue >= 0.6 && !exclude.contains($0.channel) && seenItems.insert($0.item).inserted }.prefix(exclude.isEmpty ? 4 : 6)
+        // the sources answer at their own pace (slower behind a VPN): a first quick round, then, if nothing could be
+        // played, a patient one that also waits for the slow sources and tries more of what they found
+        let rounds: [(String, Int, Int)] = queries.map { ($0, 20, exclude.isEmpty ? 4 : 6) } + queries.prefix(1).map { ($0, 40, 8) }
+        for (q, wait, take) in rounds {
+            if wait > 20 { onStatus("Cerco ancora tra le sorgenti più lente…") }
+            let resp: SearchResponse
+            do { resp = try await engine.search(q, type: type, year: d.year, timeoutSec: wait) }
+            catch { NxLog.w("NxResolver", "search \"\(q)\" failed: \(error)"); continue }
+            NxLog.i("NxResolver", "search \"\(q)\" (\(wait) s): \(resp.hits.count) results in \(resp.elapsed ?? 0)s; top=\(resp.hits.prefix(5).map { "\($0.channel):\($0.title):\($0.scoreValue)" })")
+            let hits = resp.hits.filter { $0.scoreValue >= 0.6 && !exclude.contains($0.channel) && seenItems.insert($0.item).inserted }.prefix(take)
             for hit in hits {
                 onStatus("Trovato, lo preparo…")
                 if let r = await tryHit(hit, req) {
@@ -70,14 +76,17 @@ final class PlaybackResolver {
     private func tryHit(_ hit: SearchHit, _ req: PlayRequest) async -> ResolvedStream? {
         var item = hit.item
         if req.details.isTv {
-            let eps = (try? await engine.episodes(hit.item)) ?? []
-            if eps.isEmpty { return nil }
+            let eps: [EpisodeHit]
+            do { eps = try await engine.episodes(hit.item) } catch { NxLog.w("NxResolver", "\(hit.channel): episodes failed: \(error)"); return nil }
+            if eps.isEmpty { NxLog.w("NxResolver", "\(hit.channel): no episodes listed"); return nil }
             guard let ep = eps.first(where: { $0.season == req.season && $0.episode == req.episode })
                     ?? eps.first(where: { $0.season == 0 && $0.episode == req.episode && req.season == 1 })   // channels that don't number seasons
-            else { return nil }
+            else { NxLog.w("NxResolver", "\(hit.channel): S\(req.season)E\(req.episode) not among \(eps.count) episodes"); return nil }
             item = ep.item
         }
-        guard let r = try? await engine.play(item), let url = r.url else { return nil }
+        let r: PlayResponse
+        do { r = try await engine.play(item) } catch { NxLog.w("NxResolver", "\(hit.channel): play failed: \(error)"); return nil }
+        guard let url = r.url else { NxLog.w("NxResolver", "\(hit.channel): no playable link"); return nil }
         NxLog.i("NxResolver", "play on \(hit.channel): server=\(r.server ?? "?") kind=\(r.kind ?? "?")")
         return ResolvedStream(url: url, headers: r.headers ?? [:], kind: r.kind ?? "progressive", server: r.server ?? "", channel: hit.channel, alternates: r.all ?? [])
     }
