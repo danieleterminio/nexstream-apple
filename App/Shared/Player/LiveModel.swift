@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Live playback: tuning, zapping, and never giving up on a channel that stalls (the Android player's logic). It lives
 /// in the app model, not in a view, so the channel keeps playing while the screen changes shape (portrait, full screen,
@@ -30,6 +31,8 @@ final class LivePlayerModel: ObservableObject {
     // watchdog
     private var lastPos: Millis = -1
     private var lastProgressAt = Clock.now
+    private var lastFrames = -1
+    private var lastFrameAt = Clock.now
     private var healthy = 0
     private var started = false
     private var ticker: Task<Void, Never>? = nil
@@ -103,7 +106,10 @@ final class LivePlayerModel: ObservableObject {
         resetWatchdog()
     }
 
-    private func resetWatchdog() { lastPos = -1; lastProgressAt = Clock.now; healthy = 0; started = false }
+    private func resetWatchdog() { lastPos = -1; lastProgressAt = Clock.now; lastFrames = -1; lastFrameAt = Clock.now; healthy = 0; started = false }
+
+    /// "Ricollega il canale": the same channel and quality, connected again from scratch.
+    func reconnectNow() { tune(current, variant: playing.1.isEmpty ? nil : playing) }
 
     /// The line allows one connection: the previous stream must be stopped before the next one opens, or the edge answers
     /// 403. So: stop, a short pause, then open.
@@ -168,7 +174,7 @@ final class LivePlayerModel: ObservableObject {
     }
     private func streamFailed() {
         if tuning { return }
-        lastFailure = Vpn.shared.active.value ? "Il canale non si avvia. Può succedere quando la linea è già in uso su un altro dispositivo." : "Nessuna connessione: controlla la rete e la VPN."
+        lastFailure = player.failureReason ?? (Vpn.shared.active.value ? "Il canale non si avvia. Può succedere quando la linea è già in uso su un altro dispositivo." : "Nessuna connessione: controlla la rete e la VPN.")
         reconnect()
     }
 
@@ -222,11 +228,15 @@ final class LivePlayerModel: ObservableObject {
         tick += 1
         let t = Clock.now
         if tick % 30 == 0 { refreshGuide() }
-        if tuning || !player.hasMedia || paused { lastProgressAt = t; healthy = 0; if tuning { started = false }; return }
+        if tuning || !player.hasMedia || paused { lastProgressAt = t; lastFrameAt = t; healthy = 0; if tuning { started = false }; return }
         let pos = player.engineTimeMs
         let moving = player.state == .playing && pos != lastPos
         if moving { lastProgressAt = t }
         lastPos = pos
+        // the picture: new frames keep coming while the clock moves (nil = cannot tell, e.g. VLC or no video)
+        let frames = player.framesShown()
+        if frames == nil || frames != lastFrames || UIApplication.shared.applicationState != .active { lastFrameAt = t }
+        lastFrames = frames ?? -1
         buffering = !moving && !paused
         if moving {
             started = true
@@ -238,7 +248,12 @@ final class LivePlayerModel: ObservableObject {
         // a channel that was playing gets 8 s to move again; one that is still starting gets 20 s
         if t - lastProgressAt > (started ? 8_000 : 20_000) {
             if lastFailure == nil { lastFailure = "Il canale non manda più dati." }
-            lastProgressAt = t
+            lastProgressAt = t; lastFrameAt = t
+            reconnect()
+        } else if moving && started && !player.external && !player.pipActive && UIApplication.shared.applicationState == .active && t - lastFrameAt > 12_000 {
+            // the sound goes on but the picture stopped
+            lastFailure = "L'immagine del canale si è bloccata."
+            lastProgressAt = t; lastFrameAt = t
             reconnect()
         }
     }

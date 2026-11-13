@@ -12,6 +12,13 @@ struct VodPlayerView: View {
     @StateObject private var chrome = ChromeState()
     @State private var countdown = 10
     @FocusState private var focused: Bool
+    #if os(iOS)
+    @StateObject private var feedback = GestureFeedback()
+    /// The drag under way: 0 undecided, 1 vertical (brightness / volume), 2 horizontal (ignored).
+    @State private var dragAxis = 0
+    @State private var dragLeft = true
+    @State private var dragStart: Double = 0
+    #endif
 
     init(model: VodPlayerModel, full: Bool, width: CGFloat) {
         self.model = model
@@ -50,6 +57,9 @@ struct VodPlayerView: View {
             PlayerSurface(player: model.player).ignoresSafeArea(.container, edges: full ? .all : [])
             if player.external { ElsewhereNotice(icon: "airplayvideo", text: "In riproduzione su AirPlay") }
             else if player.pipActive { ElsewhereNotice(icon: "pip", text: "In riproduzione in una finestra") }
+            #if os(iOS)
+            gestureLayer
+            #endif
             switch model.phase {
             case .resolving(let status): resolving(status)
             case .playing: playingOverlay
@@ -57,6 +67,9 @@ struct VodPlayerView: View {
             case .ended: ended
             case .stillWatching: stillWatching
             }
+            #if os(iOS)
+            GestureBubble(feedback: feedback).animation(.easeOut(duration: 0.15), value: feedback.kind)
+            #endif
         }
         .clipped()
         #if os(tvOS)
@@ -78,10 +91,44 @@ struct VodPlayerView: View {
         .onChange(of: app.sheets.isEmpty) { _, empty in if empty { focused = true } }
         .onChange(of: model.phase) { _, p in if p == .playing { focused = true } }
         #else
-        .contentShape(Rectangle())
-        .onTapGesture { if model.phase == .playing { chrome.toggle() } }
+        .background(VolumeHook().frame(width: 1, height: 1).opacity(0.02))
         #endif
     }
+
+    #if os(iOS)
+    /// Touch: tap = controls on / off; double tap on the left / right half = 10 s back / forward; full screen, a vertical
+    /// drag on the left = brightness, on the right = volume. Under the controls, so their buttons come first.
+    private var gestureLayer: some View {
+        GeometryReader { g in
+            Color.clear
+                .contentShape(Rectangle())
+                .gesture(
+                    SpatialTapGesture(count: 2).onEnded { v in doubleTap(left: v.location.x < g.size.width / 2) }
+                        .exclusively(before: TapGesture().onEnded { if model.phase == .playing { chrome.toggle() } })
+                )
+                .simultaneousGesture(DragGesture(minimumDistance: 14).onChanged { v in drag(v, g.size) }.onEnded { _ in dragAxis = 0 })
+        }
+    }
+
+    private func doubleTap(left: Bool) {
+        guard model.phase == .playing, model.duration > 0 else { return }
+        model.seekBy(left ? -10_000 : 10_000)
+        feedback.show(left ? .back : .forward)
+    }
+
+    private func drag(_ v: DragGesture.Value, _ size: CGSize) {
+        guard full, model.phase == .playing, size.height > 0 else { return }
+        if dragAxis == 0 {
+            dragAxis = abs(v.translation.height) > abs(v.translation.width) ? 1 : 2
+            dragLeft = v.startLocation.x < size.width / 2
+            dragStart = dragLeft ? SystemLevels.brightness : SystemLevels.volume
+        }
+        guard dragAxis == 1 else { return }
+        let level = max(0, min(1, dragStart - Double(v.translation.height) / Double(size.height * 0.8)))
+        if dragLeft { SystemLevels.brightness = level; feedback.show(.brightness, level) }
+        else { SystemLevels.volume = level; feedback.show(.volume, level) }
+    }
+    #endif
 
     // MARK: states
 
@@ -226,9 +273,9 @@ struct VodPlayerView: View {
                     }
                     if full {
                         HStack(spacing: 14) {
-                            PlayerOption(icon: "speedometer", title: model.speed == 1 ? "Velocità" : String(format: "%.2g×", model.speed)) { speed() }
-                            if model.details.isTv && !model.isOffline { PlayerOption(icon: "rectangle.stack", title: "Episodi") { episodes() } }
-                            PlayerOption(icon: "captions.bubble", title: "Audio e sottotitoli") { app.presentTracks(model.player) }
+                            PlayerOption(icon: "speedometer", title: model.speed == 1 ? "Velocità" : Settings.speedLabel(model.speed)) { speed() }
+                            if model.details.isTv && model.canBrowse { PlayerOption(icon: "rectangle.stack", title: "Episodi") { episodes() } }
+                            PlayerOption(icon: "captions.bubble", title: "Audio e sottotitoli") { tracks() }
                             PlayerOption(icon: player.fill ? "arrow.down.right.and.arrow.up.left.rectangle" : "arrow.up.left.and.arrow.down.right.rectangle", title: player.fill ? "Adatta" : "Riempi") { player.fill.toggle() }
                             Spacer(minLength: 0)
                             if let n = model.nextRequest(auto: false) { PlayerOption(icon: "forward.end.fill", title: "Prossimo episodio") { app.play(n) } }
@@ -303,7 +350,13 @@ struct VodPlayerView: View {
     // MARK: panels
 
     private func speed() {
-        app.choose("Velocità", Settings.speedOptions.map { ($0, $0 == 1 ? "Normale" : String(format: "%.2g×", $0)) }, current: model.speed) { model.setSpeed($0) }
+        app.choose("Velocità", Settings.speedOptions.map { ($0, Settings.speedLabel($0)) }, current: model.speed) { model.setSpeed($0) }
+    }
+
+    /// "Audio e sottotitoli": the audio track chosen becomes the profile's language.
+    private func tracks() {
+        let pid = app.pid
+        app.presentTracks(model.player) { name in app.core.settings.setAudioLang(pid, audioLangOf(name)) }
     }
 
     private func episodes() {
@@ -322,14 +375,31 @@ struct VodPlayerView: View {
 
     private func source() {
         guard let s = model.stream, s.channel != "offline" else { return }
-        app.confirm("Cercare un'altra fonte?", message: "Adesso: \(s.channel) · \(s.server). La riproduzione riparte da dove sei.", confirm: "Cerca un'altra fonte") { model.start(retry: true) }
+        if s.alternates.count > 1 {
+            var a = [NxAction]()
+            for (i, alt) in s.alternates.enumerated() {
+                let label = (alt.label ?? "").isBlank ? "Versione \(i + 1)" : (alt.label ?? "")
+                a.append(NxAction(label, selected: alt.url == s.url, badge: VodPlayerView.qualityOf(label)) { model.useAlternate(alt) })
+            }
+            a.append(NxAction("Cerca un'altra fonte", sub: "Adesso: \(s.channel) · \(s.server)", icon: "arrow.triangle.2.circlepath") { model.otherSource() })
+            app.menu("Fonte", a)
+        } else {
+            app.confirm("Cercare un'altra fonte?", message: "Adesso: \(s.channel) · \(s.server). La riproduzione riparte da dove sei.", confirm: "Cerca un'altra fonte") { model.otherSource() }
+        }
     }
+
+    /// "1080p" in a version's name → FHD; 2160 → 4K, 720 → HD, 480 → SD.
+    static func qualityOf(_ label: String) -> String? {
+        guard let m = VodPlayerView.qualityRx.find(label) else { return nil }
+        switch m[1] { case "2160": return "4K"; case "1080": return "FHD"; case "720": return "HD"; default: return "SD" }
+    }
+    private static let qualityRx = Rx(#"\b(2160|1080|720|480)p?\b"#)
 
     private func options() {
         var a = [NxAction]()
-        a.append(NxAction("Audio e sottotitoli", icon: "captions.bubble") { app.presentTracks(model.player) })
-        a.append(NxAction("Velocità", sub: model.speed == 1 ? "Normale" : String(format: "%.2g×", model.speed), icon: "speedometer") { speed() })
-        if model.details.isTv && !model.isOffline { a.append(NxAction("Episodi", icon: "rectangle.stack") { episodes() }) }
+        a.append(NxAction("Audio e sottotitoli", icon: "captions.bubble") { tracks() })
+        a.append(NxAction("Velocità", sub: Settings.speedLabel(model.speed), icon: "speedometer") { speed() })
+        if model.details.isTv && model.canBrowse { a.append(NxAction("Episodi", icon: "rectangle.stack") { episodes() }) }
         if let n = model.nextRequest(auto: false) { a.append(NxAction("Prossimo episodio", icon: "forward.end.fill") { app.play(n) }) }
         if let s = model.stream, s.channel != "offline" { a.append(NxAction("Cambia fonte", sub: "\(s.channel) · \(s.server)", icon: "arrow.triangle.2.circlepath") { source() }) }
         a.append(NxAction("Esci dal video", icon: "xmark") { app.closePlayer() })
@@ -354,8 +424,8 @@ struct VodPlayerView: View {
                     if !model.subtitle.isEmpty { Text(model.subtitle).font(NxFont.ui(14, .bold)).foregroundStyle(NxColor.textMuted).lineLimit(2) }
                     HStack(alignment: .top, spacing: 4) {
                         if !model.isOffline { NxIconAction(icon: "tv", label: "Sulla TV") { app.presentCast() } }
-                        NxIconAction(icon: "captions.bubble", label: "Audio") { app.presentTracks(model.player) }
-                        NxIconAction(icon: "speedometer", label: model.speed == 1 ? "Velocità" : String(format: "%.2g×", model.speed)) { speed() }
+                        NxIconAction(icon: "captions.bubble", label: "Audio") { tracks() }
+                        NxIconAction(icon: "speedometer", label: model.speed == 1 ? "Velocità" : Settings.speedLabel(model.speed)) { speed() }
                         if let s = model.stream, s.channel != "offline" { NxIconAction(icon: "arrow.triangle.2.circlepath", label: "Fonte") { source() } }
                         if model.nextReq != nil { NxIconAction(icon: "forward.end.fill", label: "Prossimo") { if let n = model.nextRequest(auto: false) { app.play(n) } } }
                         Spacer(minLength: 0)
@@ -366,7 +436,7 @@ struct VodPlayerView: View {
                     }
                 }
                 .padding(.horizontal, Metrics.gutter).padding(.top, 12)
-                if d.isTv && !model.isOffline && !model.episodes.isEmpty {
+                if d.isTv && model.canBrowse && !model.episodes.isEmpty {
                     Text("Stagione \(request.season)").font(NxFont.rowTitle).foregroundStyle(.white).padding(.horizontal, Metrics.gutter).padding(.top, 6)
                     ForEach(model.episodes) { e in
                         let current = e.episodeNumber == request.episode

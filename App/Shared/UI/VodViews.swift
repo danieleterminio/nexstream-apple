@@ -266,6 +266,13 @@ final class TitleDetailModel: ObservableObject {
         }
     }
 
+    /// "Riprova" after a failed load.
+    func retry(pid: Int64, kids: Bool) async {
+        failed = false
+        details = nil
+        await load(pid: pid, kids: kids)
+    }
+
     func reloadPersonal(_ pid: Int64) {
         progress = core.library.progressFor(pid, id, media)
         feedback = core.library.feedback(pid, id, media)
@@ -291,7 +298,11 @@ struct TitleDetailView: View {
     var body: some View {
         Group {
             if let d = model.details { page(d) }
-            else if model.failed { StateMessage(icon: "wifi.exclamationmark", title: "Non riesco a caricare questo titolo", text: "Controlla la connessione e riprova.") }
+            else if model.failed {
+                StateMessage(icon: "wifi.exclamationmark", title: "Non riesco a caricare questo titolo", text: "Controlla la connessione e riprova.", actionTitle: "Riprova") {
+                    Task { await model.retry(pid: app.pid, kids: app.kids) }
+                }
+            }
             else { BrandLoader().frame(maxWidth: .infinity, maxHeight: .infinity) }
         }
         .nxPage()
@@ -307,7 +318,9 @@ struct TitleDetailView: View {
         let last = model.progress.first
         if !d.isTv { return (last != nil && !last!.completed && last!.positionMs > 60_000) ? "Riprendi" : "Riproduci" }
         guard let l = last else { return "Riproduci S1 E1" }
-        return l.completed ? "Riproduci S\(l.season) E\(l.episode + 1)" : "Riprendi S\(l.season) E\(l.episode)"
+        if !l.completed { return "Riprendi S\(l.season) E\(l.episode)" }
+        let n = d.episodeAfter(l.season, l.episode)
+        return "Riproduci S\(n.0) E\(n.1)"
     }
 
     private func restart(_ d: TmdbDetails) {
@@ -318,7 +331,7 @@ struct TitleDetailView: View {
         HStack(spacing: Metrics.u(8)) {
             if model.match > 0 { Text("\(model.match)% per te").font(NxFont.ui(13, .heavy)).foregroundStyle(NxColor.success) }
             if d.year > 0 { Text(String(d.year)).font(NxFont.meta).foregroundStyle(NxColor.textMuted) }
-            if let c = d.certification { NxTag(text: c) }
+            if let c = TmdbDetails.ageLabel(d.certification) { NxTag(text: c) }
             if d.isTv { Text(d.numberOfSeasons == 1 ? "1 stagione" : "\(d.numberOfSeasons) stagioni").font(NxFont.meta).foregroundStyle(NxColor.textMuted) }
             else if d.runtimeMin > 0 { Text(TimeText.duration(minutes: d.runtimeMin)).font(NxFont.meta).foregroundStyle(NxColor.textMuted) }
             if d.voteAverage > 0 { Text(String(format: "★ %.1f", d.voteAverage)).font(NxFont.meta).foregroundStyle(NxColor.gold) }
@@ -334,7 +347,7 @@ struct TitleDetailView: View {
             (Text(d.isTv ? "Creata da: " : "Regia: ").foregroundColor(NxColor.textDim) + Text(dir.name).foregroundColor(NxColor.textMuted)).font(NxFont.caption).lineLimit(1)
         }
         if !d.genres.isEmpty {
-            (Text("Generi: ").foregroundColor(NxColor.textDim) + Text(d.genres.map { $0.name }.joined(separator: ", ")).foregroundColor(NxColor.textMuted)).font(NxFont.caption).lineLimit(1)
+            (Text("Generi: ").foregroundColor(NxColor.textDim) + Text(d.genres.map { TmdbDetails.genreIt($0.name) }.joined(separator: ", ")).foregroundColor(NxColor.textMuted)).font(NxFont.caption).lineLimit(1)
         }
     }
 
@@ -343,10 +356,16 @@ struct TitleDetailView: View {
         let inList = store.listKeys.contains(t.key)
         NxIconAction(icon: inList ? "checkmark" : "plus", label: "La mia lista", active: inList) { app.toggleList(t) }
         NxIconAction(icon: model.feedback == "liked" ? "hand.thumbsup.fill" : "hand.thumbsup", label: "Mi piace", active: model.feedback == "liked") {
-            app.core.library.setFeedback(app.pid, d.id, d.media, current: model.feedback, want: "liked")
+            let cur = model.feedback
+            app.core.library.setFeedback(app.pid, d.id, d.media, current: cur, want: "liked")
+            model.reloadPersonal(app.pid)
+            app.say(cur == "liked" ? "Valutazione rimossa." : "Grazie! Ti consiglieremo più titoli come questo.")
         }
         NxIconAction(icon: model.feedback == "disliked" ? "hand.thumbsdown.fill" : "hand.thumbsdown", label: "Non fa per me", active: model.feedback == "disliked") {
-            app.core.library.setFeedback(app.pid, d.id, d.media, current: model.feedback, want: "disliked")
+            let cur = model.feedback
+            app.core.library.setFeedback(app.pid, d.id, d.media, current: cur, want: "disliked")
+            model.reloadPersonal(app.pid)
+            app.say(cur == "disliked" ? "Valutazione rimossa." : "Capito, ne terremo conto nei consigli.")
         }
         if last != nil { NxIconAction(icon: "arrow.counterclockwise", label: "Ricomincia") { restart(d) } }
         if !d.isTv {
@@ -570,7 +589,7 @@ struct TitleDetailView: View {
     private func episodeCard(_ d: TmdbDetails, _ e: TmdbEpisode) -> some View {
         let w = Metrics.showCardW * 0.9
         return VStack(alignment: .leading, spacing: 10) {
-            CardButton(action: { app.play(request(d, e)) }) { still(e, w) }
+            CardButton(action: { app.play(request(d, e)) }, onLong: { episodeMenu(d, e) }) { still(e, w) }
             Text("\(e.episodeNumber). \(e.name ?? "Episodio \(e.episodeNumber)")").font(NxFont.ui(13, .bold)).foregroundStyle(NxColor.text).lineLimit(1)
             Text(e.overview ?? " ").font(NxFont.ui(11, .medium)).foregroundStyle(NxColor.textDim).lineLimit(3)
         }

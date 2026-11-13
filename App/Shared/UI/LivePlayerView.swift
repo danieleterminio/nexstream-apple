@@ -151,6 +151,7 @@ struct LivePlayerView: View {
                             PlayerOption(icon: "captions.bubble", title: "Audio e sottotitoli") { app.presentTracks(model.player) }
                             if model.variants().count > 1 { PlayerOption(icon: "sparkles.tv", title: "Qualità") { quality() } }
                             PlayerOption(icon: "info.circle", title: "Programma") { details() }
+                            PlayerOption(icon: "arrow.clockwise", title: "Ricollega") { model.reconnectNow(); chrome.show() }
                             Spacer(minLength: 0)
                         }
                     }
@@ -194,7 +195,8 @@ struct LivePlayerView: View {
             Text(message).font(full ? NxFont.body : NxFont.caption).foregroundStyle(NxColor.textMuted).multilineTextAlignment(.center).lineLimit(3)
             HStack(spacing: 8) { NxSpinner(size: 13); Text("Continuo a riprovare…").font(NxFont.caption).foregroundStyle(NxColor.textDim) }
             HStack(spacing: Metrics.u(10)) {
-                NxButton("Canale successivo", icon: "forward.end.fill", kind: .primary) { model.zap(1) }
+                NxButton("Ricollega", icon: "arrow.clockwise", kind: .primary) { model.reconnectNow() }
+                if full { NxButton("Canale successivo", icon: "forward.end.fill") { model.zap(1) } }
                 NxButton("Chiudi", kind: .secondary) { app.closePlayer() }
             }
             .padding(.top, 4)
@@ -213,8 +215,21 @@ struct LivePlayerView: View {
     private func quality() {
         let vs = model.variants()
         app.menu("Qualità", vs.map { v in
-            NxAction(v.1 == "UHD" ? "4K" : (v.1.isEmpty ? "Predefinita" : v.1), selected: v.0 == model.playing.0) { model.tune(model.currentId, variant: v) }
+            let d = LivePlayerView.describe(v.1)
+            return NxAction(d.0, sub: d.1, selected: v.0 == model.playing.0, badge: v.1.isEmpty ? nil : (v.1 == "UHD" ? "4K" : v.1)) { model.tune(model.currentId, variant: v) }
         })
+    }
+
+    /// A quality of the line in words, and what it means.
+    static func describe(_ q: String) -> (String, String?) {
+        switch q {
+        case "UHD": return ("Ultra HD 4K", "La qualità più alta della linea")
+        case "FHD": return ("Full HD", "1080p")
+        case "HD": return ("HD", "720p")
+        case "HEVC": return ("HEVC", "H.265: più leggero, non tutti i dispositivi lo decodificano")
+        case "SD": return ("Standard", nil)
+        default: return (q.isEmpty ? "Predefinita" : q, nil)
+        }
     }
 
     private func details() {
@@ -233,6 +248,7 @@ struct LivePlayerView: View {
         a.append(NxAction("Lista dei canali", icon: "list.bullet") { channelList() })
         a.append(NxAction(fav ? "Togli dai preferiti" : "Aggiungi ai preferiti", icon: fav ? "star.slash" : "star") { app.toggleFavorite(c) })
         a.append(NxAction("Dettagli del programma", icon: "info.circle") { details() })
+        a.append(NxAction("Ricollega il canale", sub: "Se l'immagine o l'audio hanno problemi", icon: "arrow.clockwise") { model.reconnectNow() })
         a.append(NxAction("Esci dal canale", icon: "xmark") { app.closePlayer() })
         app.menu(c.name, a)
     }
@@ -283,6 +299,7 @@ struct LivePlayerView: View {
                                 NxIconAction(icon: "info.circle", label: "Programma") { details() }
                                 NxIconAction(icon: "captions.bubble", label: "Audio") { app.presentTracks(model.player) }
                                 if model.variants().count > 1 { NxIconAction(icon: "sparkles.tv", label: "Qualità") { quality() } }
+                                NxIconAction(icon: "arrow.clockwise", label: "Ricollega") { model.reconnectNow() }
                                 Spacer(minLength: 0)
                             }
                             .padding(.leading, -10)

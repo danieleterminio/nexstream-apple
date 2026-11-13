@@ -166,7 +166,15 @@ final class Settings {
     static let stillHoursOptions = [1, 2, 3, 4, 0]
     static let stillEpisodesOptions = [2, 3, 4, 5]
     static let audioOptions: [(String, String)] = [("it", "Italiano"), ("orig", "Lingua originale"), ("en", "Inglese")]
-    static let speedOptions: [Float] = [0.75, 1, 1.25, 1.5]
+    static let speedOptions: [Float] = [0.5, 0.75, 1, 1.25, 1.5, 2]
+    /// "Normale", "0,5×", "1,25×", "2×".
+    static func speedLabel(_ v: Float) -> String {
+        if v == 1 { return "Normale" }
+        var t = String(format: "%.2f", Double(v))
+        while t.hasSuffix("0") { t.removeLast() }
+        if t.hasSuffix(".") { t.removeLast() }
+        return t.replacingOccurrences(of: ".", with: ",") + "×"
+    }
 }
 
 /// Who is watching. `current` is nil until a profile is picked (the picker is shown at every cold start, Netflix-style,

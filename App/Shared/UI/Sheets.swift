@@ -18,9 +18,11 @@ struct NxAction: Identifiable {
     var icon: String? = nil
     var selected: Bool = false
     var destructive: Bool = false
+    /// A small outlined label at the end of the line ("FHD", "4K").
+    var badge: String? = nil
     var action: () -> Void
-    init(_ title: String, sub: String? = nil, icon: String? = nil, selected: Bool = false, destructive: Bool = false, action: @escaping () -> Void) {
-        self.title = title; self.sub = sub; self.icon = icon; self.selected = selected; self.destructive = destructive; self.action = action
+    init(_ title: String, sub: String? = nil, icon: String? = nil, selected: Bool = false, destructive: Bool = false, badge: String? = nil, action: @escaping () -> Void) {
+        self.title = title; self.sub = sub; self.icon = icon; self.selected = selected; self.destructive = destructive; self.badge = badge; self.action = action
     }
 }
 
@@ -38,13 +40,24 @@ extension AppModel {
 
     /// A list of things to do with something (what a long press opens).
     func menu(_ title: String?, _ actions: [NxAction]) {
+        if let cap = menuCapture { cap(title, actions); return }
         present(title) {
             VStack(spacing: 0) {
                 ForEach(actions) { a in
-                    OptionRow(title: a.title, sub: a.sub, icon: a.icon, selected: a.selected, destructive: a.destructive) { self.dismissSheet(); a.action() }
+                    OptionRow(title: a.title, sub: a.sub, icon: a.icon, selected: a.selected, destructive: a.destructive, badge: a.badge) { self.dismissSheet(); a.action() }
                 }
             }
         }
+    }
+
+    /// Runs a menu builder (a card's long press) and returns what it would show instead of showing it: the Apple TV
+    /// turns it into the system's long-press menu, which is what the focus engine offers on a held select.
+    func captureMenu(_ build: () -> Void) -> (title: String?, actions: [NxAction]) {
+        var out: (title: String?, actions: [NxAction]) = (nil, [])
+        menuCapture = { t, a in out = (t, a) }
+        build()
+        menuCapture = nil
+        return out
     }
 
     /// Pick one of a few values.
@@ -179,6 +192,7 @@ struct OptionRow: View {
     var icon: String? = nil
     var selected: Bool = false
     var destructive: Bool = false
+    var badge: String? = nil
     let action: () -> Void
     var body: some View {
         Button(action: action) {
@@ -190,6 +204,11 @@ struct OptionRow: View {
                         if let s = sub { Text(s).font(NxFont.caption).foregroundStyle(focused ? Color.black.opacity(0.6) : NxColor.textDim).multilineTextAlignment(.leading).lineLimit(2) }
                     }
                     Spacer(minLength: 8)
+                    if let b = badge {
+                        Text(b).font(NxFont.label).lineLimit(1)
+                            .padding(.horizontal, Metrics.u(5)).padding(.vertical, Metrics.u(1.5))
+                            .overlay(RoundedRectangle(cornerRadius: Metrics.u(3)).stroke(focused ? Color.black.opacity(0.5) : NxColor.textDim, lineWidth: 1))
+                    }
                     if selected { Image(systemName: "checkmark").font(.system(size: 14 * Metrics.unit, weight: .bold)) }
                 }
                 .foregroundStyle(focused ? Color.black : (destructive ? NxColor.accentBright : Color.white))

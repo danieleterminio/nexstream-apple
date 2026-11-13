@@ -114,6 +114,8 @@ final class AppModel: ObservableObject {
     @Published var liveTab: Int = UserDefaults.standard.integer(forKey: "nx.liveTab") { didSet { UserDefaults.standard.set(liveTab, forKey: "nx.liveTab") } }
     /// Our own panels (menus, pickers, dialogs, editors), the last one on top.
     @Published var sheets: [NxSheetItem] = []
+    /// Set while `captureMenu` runs: `menu` hands its lines over instead of presenting them.
+    var menuCapture: ((String?, [NxAction]) -> Void)? = nil
     @Published var pendingSearch: String? = nil
     /// Bumped when the tab already on screen is tapped again (back to the top).
     @Published var reselect = 0
@@ -159,6 +161,9 @@ final class AppModel: ObservableObject {
             else if self.profile != nil, self.paths[self.section]?.last != .downloads { self.open(.downloads) }
             #endif
         })
+        #if os(iOS)
+        NetMonitor.shared.start()
+        #endif
         watches.append(onMain(core.pendingSearch) { [weak self] q in
             guard let self = self, let q = q else { return }
             self.pendingSearch = q; self.section = .search; self.core.pendingSearch.value = nil
@@ -239,12 +244,21 @@ final class AppModel: ObservableObject {
             let m = LivePlayerModel(channelId: c.streamId, listIds: list)
             m.player.onRestoreUI = { [weak self] in self?.playerHidden = false }
             live = m
-            m.start()
+            startAfterCellularCheck { m.start() }
         }
         playerHidden = false
         playing = .live(c.streamId, list)
     }
-    func play(_ r: PlayRequest) {
+    func play(_ request: PlayRequest) {
+        var r = request
+        #if os(iOS)
+        // saved on this phone: the local copy, no source search and no network
+        if r.localFile == nil, let d = core.downloads.completed(r), let f = core.downloads.fileURL(d) {
+            NxLog.i("NxPlayer", "playing the downloaded copy of \(r.id)")
+            r.localFile = f.path
+        }
+        #endif
+        let wasPlaying = live != nil || vod != nil
         if let l = live { l.stop(); live = nil }
         if let v = vod { v.close(); vod = nil }
         PlatformServices.shared.playerOpened()
@@ -253,12 +267,50 @@ final class AppModel: ObservableObject {
         m.onNext = { [weak self] n in self?.play(n) }
         m.player.onRestoreUI = { [weak self] in self?.playerHidden = false }
         vod = m
-        m.start()
+        if r.localFile != nil || wasPlaying { m.start() } else { startAfterCellularCheck { m.start() } }
         playerHidden = false
         playing = .vod(r)
     }
+
+    // MARK: mobile data
+
+    /// "Sei sulla rete mobile": asked once per run before the first video on mobile data (iPhone).
+    @Published private(set) var cellularAsk = false
+    private var cellularOk = false
+    private var held: (() -> Void)? = nil
+    private func startAfterCellularCheck(_ start: @escaping () -> Void) {
+        #if os(iOS)
+        if !cellularOk && NetMonitor.shared.expensive.value && !playerHidden {
+            held = start
+            cellularAsk = true
+            return
+        }
+        #endif
+        start()
+    }
+    /// "Guarda comunque".
+    func acceptCellular() {
+        cellularOk = true
+        cellularAsk = false
+        let h = held
+        held = nil
+        h?()
+    }
+
+    /// "Stavi guardando su…": the episode and the point the other device had reached.
+    func playOther(_ t: TmdbTitle) {
+        let mine = core.sync.others.value.filter { $0.profileId == pid && $0.tmdbId == t.tmdbId && $0.media == t.media }
+        guard let o = mine.max(by: { $0.at < $1.at }) else { playTitle(t); return }
+        Task {
+            guard let d = try? await core.catalog.details(t.media, t.tmdbId) else { say("Non riesco a caricare questo titolo: controlla la connessione."); return }
+            let ep = d.isTv ? (try? await core.catalog.season(d.id, o.season))?.episodes?.first { $0.episodeNumber == o.episode }?.name : nil
+            play(PlayRequest(details: d, season: d.isTv ? o.season : 0, episode: d.isTv ? o.episode : 0, episodeTitle: ep, startMs: o.pos))
+        }
+    }
     /// Stops whatever is playing and leaves the player.
     func closePlayer() {
+        cellularAsk = false
+        held = nil
         live?.stop(); live = nil
         vod?.close(); vod = nil
         if playing != nil {
@@ -292,7 +344,7 @@ final class AppModel: ObservableObject {
     }
 
     /// Started from the car screen: the phone keeps showing what it was showing.
-    @Published var playerHidden = false
+    @Published var playerHidden = false { didSet { if playerHidden && cellularAsk { acceptCellular() } } }
     /// Back to the first page of Home (the phone remote's Home key).
     func goHome() { closePlayer(); paths = [:]; section = .home }
     /// "Riproduci" on a title: from where it was left, or the first episode.
@@ -342,6 +394,39 @@ final class AppModel: ObservableObject {
                 if let d = try? await core.catalog.details(media, id) { playTitle(d) } else { open(.title(media, id)) }
             }
         }
+    }
+
+    /// The long-press lines of an on-demand title (poster, "Continua a guardare"). `play`: what the card's own tap plays.
+    func titleActions(_ t: TmdbTitle, inList: Bool, play: (() -> Void)? = nil) -> [NxAction] {
+        var a = [NxAction]()
+        a.append(NxAction("Riproduci", icon: "play.fill") { if let p = play { p() } else { self.playTitle(t) } })
+        a.append(NxAction("Dettagli", icon: "info.circle") { self.openTitle(t) })
+        a.append(NxAction(inList ? "Togli dalla mia lista" : "Aggiungi alla mia lista", icon: inList ? "checkmark" : "plus") { self.toggleList(t) })
+        a.append(NxAction("Segna come visto", icon: "checkmark.circle") { self.markWatched(t) })
+        if inContinue(t) { a.append(NxAction("Rimuovi da Continua a guardare", icon: "minus.circle") { self.removeContinue(t) }) }
+        return a
+    }
+    /// The title is in "Continua a guardare".
+    func inContinue(_ t: TmdbTitle) -> Bool {
+        core.library.continueWatching(pid).contains { $0.tmdbId == t.tmdbId && $0.media == t.media && !($0.media == "movie" && $0.completed) }
+    }
+    /// "Segna come visto": a series marks the episode it was on (or the first), a film its whole length.
+    func markWatched(_ t: TmdbTitle) {
+        let pid = self.pid
+        Task {
+            let e = await core.catalog.ensureTitle(t.tmdbId, t.media)
+            let p = core.library.progressFor(pid, t.tmdbId, t.media).first
+            if t.media == "tv" {
+                core.library.markWatched(pid, t.tmdbId, "tv", season: max(1, p?.season ?? 1), episode: max(1, p?.episode ?? 1), runtimeMin: (e?.runtimeMin ?? 0) > 0 ? e!.runtimeMin : 45)
+            } else {
+                core.library.markWatched(pid, t.tmdbId, "movie", season: 0, episode: 0, runtimeMin: (e?.runtimeMin ?? 0) > 0 ? e!.runtimeMin : 100)
+            }
+            say("Segnato come visto")
+        }
+    }
+    func removeContinue(_ t: TmdbTitle) {
+        core.library.clearProgress(pid, t.tmdbId, t.media)
+        say("Rimosso da Continua a guardare")
     }
 
     func toggleFavorite(_ c: ChannelEntity) { let on = core.channels.toggleFavorite(c.streamId); say(on ? "\(c.name) aggiunto ai preferiti" : "\(c.name) tolto dai preferiti") }

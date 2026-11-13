@@ -57,7 +57,8 @@ targets:
         NSSiriUsageDescription: Con Siri puoi chiedere a NexStream di riprodurre un canale, un film o una serie, anche dall'auto.
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
-        UIBackgroundModes: [audio]
+        UIBackgroundModes: [audio, processing]
+        BGTaskSchedulerPermittedIdentifiers: [app.nexstream.one.downloads]
         UIAppFonts: [Manrope.ttf, Sora.ttf]
         UIUserInterfaceStyle: Dark
         ITSAppUsesNonExemptEncryption: false
