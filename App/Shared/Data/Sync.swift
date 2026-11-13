@@ -22,6 +22,18 @@ final class SyncEngine {
     let others = Observable<[Other]>([])
     /// When the last round ended well (0 = never).
     let lastSync = Observable<Millis>(0)
+    /// For the settings line (Android: SyncEngine.Status): a round running, what went wrong last time (Italian, nil = fine).
+    struct Status: Equatable { var running = false; var error: String? = nil }
+    let status = Observable<Status>(Status())
+    /// After a 429 the server is left alone for a minute.
+    private var backoffUntil = Date.distantPast
+    /// Reminders or followed teams came down: the alerts must be armed again.
+    var onAlertsChanged: (() -> Void)?
+
+    /// Android limits (data/Sync.kt): a longer `d` is refused by the server; requests stay well under its 1000 / 1 MB.
+    static let maxD = 12_000
+    static let maxChanges = 400
+    static let maxBody = 600_000
     /// How this device is called in "Stavi guardando su …".
     var deviceName: () -> String = { "Dispositivo" }
     /// Called after remote data changed the profiles.
@@ -68,6 +80,7 @@ final class SyncEngine {
         if applying { return }
         var wait = seconds ?? 2
         if seconds == nil { wait = max(wait, 15 - Date().timeIntervalSince(lastRound)) }
+        wait = max(wait, backoffUntil.timeIntervalSinceNow)
         pending?.cancel()
         pending = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(max(0, wait) * 1_000_000_000))
@@ -97,15 +110,29 @@ final class SyncEngine {
         let aid = SyncCrypto.accountId(user: user, pass: pass)
         let key = SyncCrypto.key(user: user, pass: pass)
         if loadedFor != aid { load(aid) }
+        if Date() < backoffUntil { return }
         lastRound = Date()
+        status.value = Status(running: true, error: status.value.error)
         do {
             if !state.started { try await firstContact(aid, key) }
             try await round(aid, key)
             save(aid)
             lastSync.value = Clock.now
+            status.value = Status()
             publishOthers()
         } catch {
             NxLog.w("NxSync", "round failed: \(error)")
+            if error is VpnRequiredError { status.value = Status(running: false, error: status.value.error); return }
+            let code = (error as? HttpError)?.status
+            if code == 429 { backoffUntil = Date().addingTimeInterval(60) }
+            let message: String
+            switch code {
+            case 429: message = "Troppe richieste: riprovo tra un minuto."
+            case 507: message = "Lo spazio di sincronizzazione di questa linea è pieno."
+            case 413: message = "Troppi dati in una volta: riprovo."
+            default: message = "Sincronizzazione non riuscita: riprovo tra poco."
+            }
+            status.value = Status(running: false, error: message)
         }
     }
 
@@ -217,6 +244,8 @@ final class SyncEngine {
                 if let id = existing {
                     db.deleteProfileCascade(id)
                     db.run("DELETE FROM meta WHERE \"key\" IN (?, ?)", ["puid.\(id)", "teams.\(id)"], touch: "meta")
+                    // its viewing settings go with it (Android: settings.clear + prefs.clearProfile)
+                    Settings.forget(id); Prefs.forget(id)
                     if profiles.id == id { profiles.deselect() }
                 }
                 return true
@@ -325,6 +354,10 @@ final class SyncEngine {
         defer { applying = false }
         var touched = Set<String>()
         var profilesChanged = false
+        defer {
+            // what came down may have added, moved or removed reminders and followed teams: arm the alerts again
+            if touched.contains(where: { $0.hasPrefix("rem/") || $0.hasPrefix("teams/") || $0.hasPrefix("profile/") }) { onAlertsChanged?() }
+        }
         let ordered = list.filter { $0.key?.hasPrefix("profile/") == true } + list.filter { $0.key?.hasPrefix("profile/") != true }
         for c in ordered {
             guard let k = c.key else { continue }
@@ -383,6 +416,7 @@ final class SyncEngine {
             var out = v
             if k.hasPrefix("prog/") { out["dev"] = me; state.devs[k] = me }
             guard let plain = try? JSONSerialization.data(withJSONObject: ["k": k, "v": out] as [String: Any]), let sealed = SyncCrypto.seal(key, plain) else { continue }
+            if sealed.count > SyncEngine.maxD { NxLog.w("NxSync", "record too big, left on the device: \(k.components(separatedBy: "/").first ?? "")"); continue }
             let kid = SyncCrypto.kid(key, k)
             state.names[kid] = k
             let t = max(now, (state.times[k] ?? 0) + 1)
@@ -398,9 +432,16 @@ final class SyncEngine {
         }
         var incoming = [Incoming]()
         var since = state.seq
+        // requests of at most 400 changes and about 600 KB
         var parts = [[[String: Any]]]()
-        var i = 0
-        while i < changes.count { parts.append(Array(changes[i..<min(changes.count, i + 800)])); i += 800 }
+        var chunk = [[String: Any]]()
+        var size = 0
+        for c in changes {
+            let n = ((c["d"] as? String)?.count ?? 0) + 120
+            if !chunk.isEmpty && (chunk.count >= SyncEngine.maxChanges || size + n > SyncEngine.maxBody) { parts.append(chunk); chunk = []; size = 0 }
+            chunk.append(c); size += n
+        }
+        if !chunk.isEmpty { parts.append(chunk) }
         if parts.isEmpty { parts.append([]) }
         for part in parts {
             var r = try await call(aid, key, since: since, changes: part)

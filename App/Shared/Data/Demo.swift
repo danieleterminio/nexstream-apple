@@ -40,7 +40,8 @@ enum Demo {
             core.db.replaceLive(cats, built)
         }
         core.db.setMeta("live_sync", String(Clock.now))
-        if core.db.profiles().isEmpty {
+        // -nxNoProfiles: the very first start, before any profile exists
+        if core.db.profiles().isEmpty && !args.contains("-nxNoProfiles") {
             let id = core.profiles.add(name: "Daniele", color: 1, kids: false, icon: 0, maturity: 2, pin: nil)
             _ = core.profiles.add(name: "Bimbi", color: 3, kids: true, icon: 2, maturity: 0, pin: nil)
             if args.contains("-nxSeed") {

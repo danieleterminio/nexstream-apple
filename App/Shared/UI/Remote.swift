@@ -41,6 +41,8 @@ final class RemoteClient {
     @discardableResult func volume(_ tv: Tv, _ dir: String) async -> Lan.Reply { await call(tv.address, "/vol", token: tv.token, body: ["d": dir]) }
     @discardableResult func search(_ tv: Tv, _ q: String) async -> Lan.Reply { await call(tv.address, "/search", token: tv.token, body: ["q": q]) }
     @discardableResult func tune(_ tv: Tv, id: String) async -> Lan.Reply { await call(tv.address, "/tune", token: tv.token, body: ["id": id]) }
+    /// Tunes by channel number, as typed on a real remote.
+    @discardableResult func tune(_ tv: Tv, num: Int) async -> Lan.Reply { await call(tv.address, "/tune", token: tv.token, body: ["num": num]) }
     /// What a TV is playing (remote protocol 2).
     struct TvState: Equatable {
         var playing = false
@@ -148,10 +150,15 @@ struct RemoteView: View {
     @State private var version = 1
     @State private var now = RemoteClient.TvState()
     @State private var scrub: Millis? = nil
+    /// A paired TV that did not answer: "non risponde", Riprova, Cambia TV (Android: RemoteScreen reachable == false).
+    @State private var unreachable: RemoteClient.Tv? = nil
 
     var body: some View {
         Group {
-            if let t = tv { pad(t) } else if let a = pairingAddress { pairing(a) } else { picker }
+            if let t = tv { pad(t) }
+            else if let u = unreachable { notAnswering(u) }
+            else if let a = pairingAddress { pairing(a) }
+            else { picker }
         }
         .nxScreen(tv?.name ?? "Telecomando", back: onClose == nil) {
             if let close = onClose { NxButton("Chiudi", kind: .quiet, action: close) }
@@ -171,12 +178,6 @@ struct RemoteView: View {
         .task(id: tv?.address ?? "") {
             // what the TV is playing, while this screen is open
             guard let t = tv, version >= 2 else { return }
-            if let body = app.pendingCast {
-                app.pendingCast = nil
-                let r = await client.play(t, body)
-                if r.status == 200 && r.json["ok"].bool { app.say("In riproduzione su \(t.name)") }
-                else { app.say(r.json["error"].stringOrNil ?? "La TV non ha avviato la riproduzione.") }
-            }
             while !Task.isCancelled {
                 if scrub == nil, let st = await client.state(t) { now = st }
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
@@ -197,10 +198,12 @@ struct RemoteView: View {
                     connect(fresh, name: name, token: token)
                     return
                 }
+                if let tok = token, r.problem == nil { unreachable = RemoteClient.Tv(name: name, address: address, token: tok); return }
                 message = r.problem ?? "Non trovo la TV a \(address). NexStream deve essere aperto sulla TV, sulla stessa rete."
                 return
             }
             retried = false
+            unreachable = nil
             let tvName = r.json["name"].stringOrNil?.substringAfter("· ") ?? name
             volume = r.json["volume"].bool
             version = r.json["v"].intOrNil ?? 1
@@ -216,10 +219,22 @@ struct RemoteView: View {
         }
     }
 
+    private func notAnswering(_ u: RemoteClient.Tv) -> some View {
+        VStack(spacing: 14) {
+            StateMessage(icon: "appletvremote.gen4", title: "\(u.name) non risponde",
+                         text: "Accendi la TV e apri NexStream: il telecomando funziona solo mentre l'app è aperta, sulla stessa rete di casa.",
+                         actionTitle: busy ? "Un momento…" : "Riprova") {
+                if !busy { retried = false; connect(u.address, name: u.name, token: u.token) }
+            }
+            .frame(maxHeight: .infinity)
+            NxButton("Cambia TV", kind: .quiet) { unreachable = nil }.padding(.bottom, 16)
+        }
+    }
+
     private var picker: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Text("Apri NexStream sulla TV: compare qui sotto. La prima volta la TV mostra un codice da scrivere sul telefono.").font(NxFont.meta).foregroundStyle(NxColor.textMuted)
+                Text("Apri NexStream sulla TV: compare qui sotto. La prima volta la TV mostra un codice da scrivere sul telefono. Se sul telefono è accesa la VPN, consenti la rete locale nella VPN (in NordVPN: “Accesso alla rete locale”).").font(NxFont.meta).foregroundStyle(NxColor.textMuted)
                 if busy { HStack(spacing: 8) { NxSpinner(); Text("Mi collego…").font(NxFont.meta).foregroundStyle(NxColor.textMuted) } }
                 if let m = message { Label(m, systemImage: "exclamationmark.triangle.fill").font(NxFont.meta).foregroundStyle(NxColor.accentBright) }
                 if !saved.isEmpty {
@@ -260,7 +275,12 @@ struct RemoteView: View {
             Text("Scrivi il codice che vedi su \(pairingName)").font(NxFont.titleM).foregroundStyle(NxColor.text).multilineTextAlignment(.center)
             TextField("0000", text: $pin).keyboardType(.numberPad).font(NxFont.display(30, .bold)).multilineTextAlignment(.center).frame(maxWidth: 180)
                 .foregroundStyle(.white).tint(.white).padding(10).background(NxColor.ink3, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .onChange(of: pin) { _, v in if v.count > 4 { pin = String(v.prefix(4)) } }
+                .onChange(of: pin) { _, v in
+                    let digits = String(v.filter { $0.isNumber }.prefix(4))
+                    if digits != v { pin = digits }
+                    // four digits are the whole code: no need to press "Abbina"
+                    if digits.count == 4 && !busy { pair(address) }
+                }
             if let m = message { Text(m).font(NxFont.meta).foregroundStyle(NxColor.accentBright) }
             HStack(spacing: 10) {
                 NxButton("Annulla", kind: .quiet) { pairingAddress = nil; message = nil }
@@ -298,8 +318,8 @@ struct RemoteView: View {
         for _ in 0..<15 where pairingAddress == nil { try? await Task.sleep(nanoseconds: 1_000_000_000) }
         guard let a = pairingAddress else { NxLog.i("NxDebug", "remote test: no pairing step (\(message ?? "-"))"); return }
         try? await Task.sleep(nanoseconds: 8_000_000_000)   // time for the TV's code to be on screen
-        pin = code
-        pair(a)
+        _ = a
+        pin = code   // four digits: the field sends them by itself
         for _ in 0..<15 where tv == nil { try? await Task.sleep(nanoseconds: 1_000_000_000) }
         guard let t = tv else { NxLog.i("NxDebug", "remote test: not paired (\(message ?? "-"))"); return }
         for k in ["down", "ok", "playpause"] {
@@ -313,7 +333,12 @@ struct RemoteView: View {
 
     private func send(_ t: RemoteClient.Tv, _ k: String) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        Task { let r = await client.key(t, k); if r.status == 401 { tv = nil; message = "La TV chiede di abbinare di nuovo il telefono." } }
+        Task {
+            let r = await client.key(t, k)
+            if r.status == 401 { tv = nil; message = "La TV chiede di abbinare di nuovo il telefono." }
+            else if r.status == 0 { app.say("La TV non risponde") }
+            else if !r.ok { app.say(r.error ?? "Comando non riuscito") }
+        }
     }
 
     /// What the TV is playing: artwork, title, the bar that moves it, pause and the ten-second jumps.
@@ -437,20 +462,9 @@ struct RemoteView: View {
     }
 
     private func showChannelList(_ t: RemoteClient.Tv) {
-        Task {
-            channels = await client.channels(t) ?? channels
-            let list = channels
-            app.present("Canali sulla TV") {
-                LazyVStack(spacing: 0) {
-                    if list.isEmpty { Text("Nessun canale: sulla TV scegli prima un profilo.").font(NxFont.meta).foregroundStyle(NxColor.textDim).padding(20) }
-                    ForEach(list) { c in
-                        OptionRow(title: (c.num > 0 ? "\(c.num)  " : "") + c.name, sub: c.now) {
-                            app.dismissSheet()
-                            Task { await client.tune(t, id: c.id) }
-                        }
-                    }
-                }
-            }
+        let client = self.client
+        app.present("Canali sulla TV") {
+            RemoteChannelSheet(client: client, tv: t)
         }
     }
 
@@ -467,11 +481,99 @@ struct RemoteView: View {
         round(icon, k, size) { send(t, k) }
     }
 }
-#else
-struct RemoteView: View {
+/// "Canali sulla TV": the TV's own list with what is on now; a tap tunes the TV. The filter also takes a channel number
+/// (submit = tune that number, like typing it on a real remote). Android: RemoteScreen ChannelSheet.
+struct RemoteChannelSheet: View {
+    let client: RemoteClient
+    let tv: RemoteClient.Tv
+    @EnvironmentObject var app: AppModel
+    @State private var list: [RemoteClient.Channel]? = nil
+    @State private var failed = false
+    @State private var filter = ""
+
     var body: some View {
-        StateMessage(icon: "appletvremote.gen4", title: "Telecomando dal telefono", text: "Apri NexStream sul telefono, poi Impostazioni e “Telecomando della TV”: questa Apple TV compare da sola. La prima volta mostro qui un codice.")
-            .nxScreen("Telecomando")
+        VStack(spacing: 8) {
+            NxField(icon: "magnifyingglass") {
+                TextField("", text: $filter, prompt: Text("Cerca un canale o scrivi il numero").foregroundColor(NxColor.textDim))
+                    .autocorrectionDisabled().submitLabel(.go)
+                    .onSubmit {
+                        guard let n = Int(filter.trimmed) else { return }
+                        app.dismissSheet()
+                        Task { await tuned(await client.tune(tv, num: n)) }
+                    }
+            }
+            .padding(.horizontal, 16)
+            if failed {
+                StateMessage(icon: "tv", title: "Non riesco a leggere i canali dalla TV.", actionTitle: "Riprova") { Task { await load() } }.frame(height: 220)
+            } else if let l = list {
+                if l.isEmpty { Text("Nessun canale: sulla TV scegli prima un profilo.").font(NxFont.meta).foregroundStyle(NxColor.textDim).padding(20) }
+                let q = filter.trimmed.lowercased()
+                let shown = q.isEmpty ? l : l.filter { $0.name.lowercased().contains(q) || ($0.now?.lowercased().contains(q) ?? false) || String($0.num) == q }
+                LazyVStack(spacing: 0) {
+                    ForEach(shown) { c in
+                        OptionRow(title: (c.num > 0 ? "\(c.num)  " : "") + c.name, sub: c.now) {
+                            app.dismissSheet()
+                            Task { await tuned(await client.tune(tv, id: c.id)) }
+                        }
+                    }
+                }
+            } else {
+                NxSpinner().frame(height: 160)
+            }
+        }
+        .task { await load() }
+    }
+
+    private func load() async {
+        failed = false
+        if let l = await client.channels(tv) { list = l } else { failed = true }
+    }
+
+    @MainActor private func tuned(_ r: Lan.Reply) {
+        if r.status == 0 { app.say("La TV non risponde") } else if !r.ok { app.say(r.error ?? "Canale non trovato sulla TV") }
+    }
+}
+#else
+/// "Telecomando dal telefono" (Apple TV settings): how to pair a phone, this TV's address, the phones paired, unpair.
+/// Android: SettingsScreen "Telecomando dal telefono" + RemoteHost.unpairAll.
+struct RemoteView: View {
+    @EnvironmentObject var app: AppModel
+    @ObservedObject private var host = RemoteHost.shared
+    @State private var address: String? = nil
+
+    var body: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: Metrics.u(18)) {
+                Text("Sul telefono apri NexStream, poi Il mio spazio › Impostazioni › “Telecomando della TV”: questa Apple TV compare da sola. La prima volta qui compare un codice da scrivere sul telefono. Funziona anche senza VPN, sulla rete di casa.")
+                    .font(NxFont.meta).foregroundStyle(NxColor.textMuted)
+                VStack(alignment: .leading, spacing: Metrics.u(4)) {
+                    Text("INDIRIZZO DI QUESTA APPLE TV").font(NxFont.label).tracking(1).foregroundStyle(NxColor.textDim)
+                    Text(address.map { "\($0):\(host.port)" } ?? "Nessuna rete di casa").font(NxFont.display(20, .semibold)).foregroundStyle(NxColor.text)
+                }
+                VStack(alignment: .leading, spacing: Metrics.u(8)) {
+                    Text("TELEFONI ABBINATI").font(NxFont.label).tracking(1).foregroundStyle(NxColor.textDim)
+                    if host.pairedPhones.isEmpty {
+                        Text("Nessun telefono abbinato.").font(NxFont.meta).foregroundStyle(NxColor.textDim)
+                    } else {
+                        ForEach(host.pairedPhones, id: \.self) { n in
+                            Label(n, systemImage: "iphone").font(NxFont.ui(15, .bold)).foregroundStyle(NxColor.text)
+                        }
+                        NxButton("Scollega i telefoni", icon: "xmark.circle", kind: .danger) {
+                            app.confirm("Scollegare i telefoni?", message: "Per usarli di nuovo come telecomando andranno abbinati un'altra volta.", confirm: "Scollega", destructive: true) {
+                                host.unpairAll(); app.say("Telefoni scollegati")
+                            }
+                        }
+                        .padding(.top, Metrics.u(6))
+                    }
+                }
+            }
+            .padding(Metrics.u(20))
+            .frame(maxWidth: Metrics.u(760), alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .focusSection()
+        }
+        .nxScreen("Telecomando dal telefono")
+        .onAppear { address = Lan.address() }
     }
 }
 
@@ -483,6 +585,9 @@ final class RemoteHost: ObservableObject {
     static let shared = RemoteHost()
     struct PairRequest: Equatable { let phone: String; let pin: String; let until: Millis }
     @Published private(set) var pairing: PairRequest? = nil
+    /// Names of the phones that may send commands (Android: RemoteHost.pairedPhones).
+    @Published private(set) var pairedPhones: [String] = []
+    var port: UInt16 { server?.port ?? 8790 }
     private var server: Lan.Server?
     private var wrongPins = 0
     private let d = UserDefaults.standard
@@ -496,9 +601,13 @@ final class RemoteHost: ObservableObject {
         var m = tokens().filter { $0.value != name }
         m[t] = name.replacingOccurrences(of: "|", with: " ").replacingOccurrences(of: "\n", with: " ")
         d.set(m.map { "\($0.key)|\($0.value)" }.joined(separator: "\n"), forKey: "remote.tokens")
+        pairedPhones = m.values.sorted()
     }
+    /// Forgets every paired phone: they have to pair again.
+    func unpairAll() { d.removeObject(forKey: "remote.tokens"); pairedPhones = [] }
 
     func start() {
+        pairedPhones = tokens().values.sorted()
         if server != nil { return }
         let s = Lan.Server { [weak self] req in await self?.serve(req) ?? .json(410, "{\"ok\":false}") }
         if s.start(ports: [8790, 8791, 8792], bonjour: (Lan.deviceName(), RemoteClient.service)) { server = s; NxLog.i("NxRemote", "remote host on port \(s.port)") }
@@ -568,10 +677,14 @@ final class RemoteHost: ObservableObject {
             }
             let media = body["media"].string, tmdb = body["tmdb"].int
             guard media == "movie" || media == "tv", tmdb > 0 else { return .json(200, "{\"ok\":false}") }
-            let season = body["season"].int, episode = body["episode"].int, pos = body["pos"].int64OrNil ?? 0
+            let tvShow = media == "tv"
+            let season = tvShow ? max(1, body["season"].int) : 0, episode = tvShow ? max(1, body["episode"].int) : 0, pos = max(0, body["pos"].int64OrNil ?? 0)
             Task { @MainActor in
                 guard let d = try? await core.catalog.details(media, tmdb) else { app.say("Non riesco a caricare il titolo inviato dal telefono."); return }
-                app.play(PlayRequest(details: d, season: season, episode: episode, startMs: pos))
+                // the episode's name, for the player's title (Android: RemoteHost.play)
+                var name: String? = nil
+                if tvShow { name = (try? await core.catalog.season(tmdb, season))?.episodes?.first { $0.episodeNumber == episode }?.name }
+                app.play(PlayRequest(details: d, season: season, episode: episode, episodeTitle: name, startMs: pos))
             }
             return .json(200, "{\"ok\":true}")
         case "/state":

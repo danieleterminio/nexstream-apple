@@ -13,7 +13,8 @@ import Network
 /// five wrong codes close the server, and it stops as soon as the job is done.
 @MainActor
 final class LanLink: ObservableObject {
-    enum Kind { case login, receive }
+    /// `.profileName`: the TV's profile editor asks the name, typed with the phone keyboard (Android: LanLink.Kind.ProfileName).
+    enum Kind { case login, receive, profileName }
     enum Status: Equatable { case waiting, opened, working, done(String), failed(String), expired }
 
     static let service = "_nexstream._tcp"
@@ -78,7 +79,7 @@ final class LanLink: ObservableObject {
     private func serve(_ r: Lan.Request) async -> Lan.Response {
         let expired = closed || Clock.now > expiresAt
         if r.path == "/favicon.ico" { return Lan.Response(status: 404, type: "text/plain", body: "") }
-        if r.path == "/ping" { return .json(200, jsonString(["app": "nexstream", "kind": kind == .login ? "Login" : "Receive", "name": Lan.deviceName()])) }
+        if r.path == "/ping" { return .json(200, jsonString(["app": "nexstream", "kind": kind == .login ? "Login" : (kind == .profileName ? "ProfileName" : "Receive"), "name": Lan.deviceName()])) }
         if expired { return .html(410, page("Tempo scaduto", "<p>Questo codice non vale più. Riapri la schermata sulla TV per averne uno nuovo.</p>")) }
         if r.path == "/import" && r.method == "POST" {
             if kind != .receive { return .json(404, "{\"ok\":false}") }
@@ -101,10 +102,11 @@ final class LanLink: ObservableObject {
             if r.param("t") != token { return .html(200, codePage(nil)) }
             var fields = r.form; fields["t"] = nil
             fields = fields.mapValues { $0.trimmed }
-            lastUser = fields["username"] ?? ""
+            lastUser = fields["username"] ?? fields["name"] ?? ""
             status = .working
             if let err = await onSubmit(fields) { status = .failed(err); return .html(200, formPage(err)) }
-            return .html(200, page("Fatto!", "<div class='ok'>✓</div><p>La linea è collegata: guarda la TV.</p><p class='dim'>Puoi chiudere questa pagina.</p>"))
+            let doneText = kind == .profileName ? "Il nome è arrivato: guarda la TV." : "La linea è collegata: guarda la TV."
+            return .html(200, page("Fatto!", "<div class='ok'>✓</div><p>\(doneText)</p><p class='dim'>Puoi chiudere questa pagina.</p>"))
         }
         return .html(404, page("Non trovato", "<p>Pagina non trovata.</p>"))
     }
@@ -115,6 +117,13 @@ final class LanLink: ObservableObject {
 
     private func formPage(_ error: String?) -> String {
         let err = error.map { "<div class='err'>\(esc($0))</div>" } ?? ""
+        if kind == .profileName {
+            let nameField = """
+            <label>Nome del profilo<input name="name" value="\(esc(lastUser))" maxlength="16" autocomplete="off" autocapitalize="words" required autofocus></label>
+            <button class="go">Invia alla TV</button>
+            """
+            return page("Il nome del profilo", "\(err)<form method='post' action='/send'><input type='hidden' name='t' value='\(token)'>\(nameField)</form>")
+        }
         let fields = """
         <label>Nome utente<input name="username" value="\(esc(lastUser))" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required autofocus></label>
         <label>Password<span class="pw"><input id="pw" name="password" type="password" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" required><button type="button" class="eye" onclick="var p=document.getElementById('pw');p.type=p.type=='password'?'text':'password';this.textContent=p.type=='password'?'Mostra':'Nascondi'">Mostra</button></span></label>
@@ -217,7 +226,7 @@ struct LanLinkPanel: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: Metrics.u(24)) {
-            if link.kind == .login, let img = Lan.qr(link.url) {
+            if link.kind != .receive, let img = Lan.qr(link.url) {
                 Image(uiImage: img).interpolation(.none).resizable().scaledToFit().frame(width: Metrics.u(170), height: Metrics.u(170))
                     .padding(Metrics.u(10)).background(Color.white, in: RoundedRectangle(cornerRadius: Metrics.u(14), style: .continuous))
             }
@@ -225,7 +234,7 @@ struct LanLinkPanel: View {
                 Text(title).font(NxFont.titleM).foregroundStyle(NxColor.text)
                 Text(hint).font(NxFont.meta).foregroundStyle(NxColor.textMuted)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(link.kind == .login ? "OPPURE APRI NEL BROWSER" : "INDIRIZZO DI QUESTO DISPOSITIVO").font(NxFont.label).tracking(1).foregroundStyle(NxColor.textDim)
+                    Text(link.kind != .receive ? "OPPURE APRI NEL BROWSER" : "INDIRIZZO DI QUESTO DISPOSITIVO").font(NxFont.label).tracking(1).foregroundStyle(NxColor.textDim)
                     Text(link.address).font(NxFont.display(18, .semibold)).foregroundStyle(NxColor.text)
                 }
                 VStack(alignment: .leading, spacing: 4) {
@@ -280,7 +289,7 @@ struct TransferView: View {
             .frame(maxWidth: .infinity)
         }
         .nxScreen("Profili tra dispositivi")
-        .onAppear { openLink(); finder.start(type: LanLink.service) { devices = $0.filter { $0.name != Lan.deviceName() || true } } }
+        .onAppear { openLink(); finder.start(type: LanLink.service) { devices = $0.filter { $0.name != Lan.deviceName() } } }
         .onDisappear { link?.close(); finder.stop() }
     }
 
@@ -351,6 +360,9 @@ struct TransferView: View {
 /// "Accedi dal telefono" on the Apple TV login: a QR that opens a page where the credentials are typed on the phone.
 struct PhoneLoginPanel: View {
     let onClose: () -> Void
+    /// "Cambia linea dal telefono" (settings) closes with its own words and goes away once the new line is in.
+    var closeLabel = "Scrivi qui con il telecomando"
+    var onDone: (() -> Void)? = nil
     @EnvironmentObject var app: AppModel
     @State private var link: LanLink? = nil
     @State private var noNetwork = false
@@ -359,20 +371,51 @@ struct PhoneLoginPanel: View {
         VStack(spacing: 30) {
             if let l = link { LanLinkPanel(link: l, title: "Accedi dal telefono", hint: "Inquadra il codice con la fotocamera del telefono e scrivi lì nome utente e password.") }
             else if noNetwork { StateMessage(icon: "wifi.slash", title: "Nessuna rete di casa", text: "Collega l'Apple TV alla rete e riprova.") }
-            NxButton("Scrivi qui con il telecomando", kind: .quiet, action: onClose)
+            NxButton(closeLabel, kind: .quiet, action: onClose)
         }
         .onAppear {
             let core = app.core
+            let done = onDone
             let l = LanLink(kind: .login) { fields in
                 let u = fields["username"] ?? "", p = fields["password"] ?? ""
                 if u.isEmpty || p.isEmpty { return "Scrivi nome utente e password." }
                 switch await core.loginRepo.login(username: u, password: p) {
-                case .success: core.syncIfNeeded(force: true); return nil
+                case .success:
+                    core.syncIfNeeded(force: true)
+                    if let done = done { Task { @MainActor in try? await Task.sleep(nanoseconds: 1_500_000_000); done() } }
+                    return nil
                 case .notFound: return "Nome utente non trovato."
                 case .authFailed: return "Password sbagliata."
                 case .expired: return "La linea è scaduta o sospesa."
                 case .error(let m): return m
                 }
+            }
+            if l.open() { link = l } else { noNetwork = true }
+        }
+        .onDisappear { link?.close() }
+    }
+}
+
+/// "Scrivilo dal telefono" in the profile editor: a QR to a page where the name is typed with the phone keyboard.
+struct PhoneNamePanel: View {
+    let onName: (String) -> Void
+    let onClose: () -> Void
+    @State private var link: LanLink? = nil
+    @State private var noNetwork = false
+
+    var body: some View {
+        VStack(spacing: 30) {
+            if let l = link { LanLinkPanel(link: l, title: "Scrivi il nome dal telefono", hint: "Inquadra il codice con la fotocamera del telefono e scrivi lì il nome del profilo.") }
+            else if noNetwork { StateMessage(icon: "wifi.slash", title: "Nessuna rete di casa", text: "Collega l'Apple TV alla rete e riprova.") }
+            NxButton("Chiudi", kind: .quiet, action: onClose)
+        }
+        .onAppear {
+            let give = onName
+            let l = LanLink(kind: .profileName) { fields in
+                let n = String((fields["name"] ?? "").trimmed.prefix(16))
+                if n.isEmpty { return "Scrivi un nome" }
+                await MainActor.run { give(n.prefix(1).uppercased() + n.dropFirst()) }
+                return nil
             }
             if l.open() { link = l } else { noNetwork = true }
         }

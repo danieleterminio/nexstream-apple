@@ -99,6 +99,11 @@ final class Prefs {
     }
     /// Called when the viewer profile changes: per-profile values are re-read.
     func setProfile(_ id: Int64) { pid = id; values.value = load() }
+    /// A deleted profile leaves nothing behind.
+    static func forget(_ pid: Int64) {
+        let d = UserDefaults.standard
+        for k in d.dictionaryRepresentation().keys where k.hasPrefix("prefs.p\(pid).") { d.removeObject(forKey: k) }
+    }
     func update(_ f: (inout Values) -> Void) {
         var v = values.value
         f(&v)
@@ -137,6 +142,11 @@ final class Settings {
     let rev = Observable<Int>(0)
     private func bump() { rev.value += 1 }
     private func k(_ pid: Int64, _ n: String) -> String { "set.\(pid).\(n)" }
+    /// A deleted profile leaves nothing behind.
+    static func forget(_ pid: Int64) {
+        let d = UserDefaults.standard
+        for k in d.dictionaryRepresentation().keys where k.hasPrefix("set.\(pid).") { d.removeObject(forKey: k) }
+    }
 
     func autoplay(_ pid: Int64) -> Bool { d.object(forKey: k(pid, "autoplay")) as? Bool ?? true }
     func setAutoplay(_ pid: Int64, _ v: Bool) { d.set(v, forKey: k(pid, "autoplay")); bump() }
@@ -200,6 +210,7 @@ final class Profiles {
     }
     func delete(_ p: ProfileEntity) {
         db.deleteProfileCascade(p.id)
+        Settings.forget(p.id); Prefs.forget(p.id)
         if current.value?.id == p.id { deselect() }
     }
     /// Re-read the current profile (after an edit from the manage screen).

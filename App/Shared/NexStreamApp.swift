@@ -92,8 +92,6 @@ struct RootView: View {
                     .id(p.id)
                     .overlay(alignment: .bottomTrailing) { if let r = app.reminder, !playerShown { ReminderBanner(reminder: r) } }
             }
-        } else if app.manageProfilesGate {
-            ProfilesView(manage: true) { app.manageProfilesGate = false; app.core.profiles.refresh() }
         } else {
             ProfilesView()
         }

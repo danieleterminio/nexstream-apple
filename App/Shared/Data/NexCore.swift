@@ -103,6 +103,12 @@ final class NexCore {
         Crests.load(db)
         reminders.rescheduleAll()
         Task { await teams.scheduleAlerts() }
+        // reminders and teams that arrive from another device ring here too
+        sync.onAlertsChanged = { [weak self] in
+            guard let self = self else { return }
+            self.reminders.rescheduleAll()
+            Task { await self.teams.scheduleAlerts() }
+        }
         // per-profile playback preferences and the VOD catalogue's maturity follow the selected profile
         watches.append(profiles.current.observe { [weak self] p in
             guard let self = self else { return }

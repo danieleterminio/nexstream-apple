@@ -240,7 +240,11 @@ struct SettingsView: View {
     @State private var engineVersion = ""
     @State private var compat = NxPlayer.forceVlc
     @State private var synced: Millis = 0
+    @State private var cloud = SyncEngine.Status()
     @State private var watches = [Watch]()
+    #if os(tvOS)
+    @ObservedObject private var remoteHost = RemoteHost.shared
+    #endif
 
     var body: some View {
         let core = app.core
@@ -259,7 +263,10 @@ struct SettingsView: View {
                     }
                     .padding(.horizontal, Metrics.u(4)).padding(.vertical, Metrics.u(8))
                     SettingRow(icon: "person.2.fill", title: "Cambia profilo") { app.changeProfile() }
-                    SettingRow(icon: "person.crop.circle.badge.plus", title: "Gestisci profili", sub: "Nome, avatar, PIN e profili per bambini") { app.open(.manageProfiles) }
+                    // a kids profile cannot reach the profiles (and with them maturity and PINs)
+                    if !p.kids {
+                        SettingRow(icon: "person.crop.circle.badge.plus", title: "Gestisci profili", sub: "Nome, avatar, PIN e profili per bambini") { app.open(.manageProfiles) }
+                    }
                     SettingRow(icon: "soccerball", title: "Le tue squadre", sub: teams.isEmpty ? "Partite in Home e un avviso 10 minuti prima" : teams.map { $0.name }.joined(separator: ", ")) { app.open(.teams) }
                     SettingRow(icon: "arrow.left.arrow.right", title: "Copia o invia i profili", sub: "Tra questo dispositivo e un'altra app NexStream di casa") { app.open(.transfer) }
                 }
@@ -292,16 +299,27 @@ struct SettingsView: View {
                 SettingRow(icon: "clock.arrow.circlepath", title: "Azzera “Continua a guardare”", sub: "Toglie i titoli lasciati a metà", chevron: false) {
                     app.confirm("Azzerare “Continua a guardare”?", message: "I titoli lasciati a metà spariscono dalla Home.", confirm: "Azzera") { core.library.clearContinue(pid); app.say("Fatto") }
                 }
-                #if os(iOS)
                 OptionHeader(title: "In casa")
+                #if os(iOS)
                 SettingRow(icon: "appletvremote.gen4.fill", title: "Telecomando della TV", sub: "Usa il telefono per comandare NexStream sulla TV di casa") { app.open(.remote) }
+                #else
+                SettingRow(icon: "iphone.radiowaves.left.and.right", title: "Telecomando dal telefono",
+                           sub: (remoteHost.pairedPhones.isEmpty ? "Sul telefono apri NexStream e “Telecomando della TV”." : "Abbinati: \(remoteHost.pairedPhones.joined(separator: ", ")).") + (Lan.address().map { " Indirizzo: \($0)" } ?? "")) {
+                    app.open(.remote)
+                }
                 #endif
                 OptionHeader(title: "Linea")
                 if let s = app.session {
-                    SettingRow(icon: "antenna.radiowaves.left.and.right", title: "Linea \(s.username)", sub: expiry(s), chevron: false) {}
+                    SettingRow(icon: "antenna.radiowaves.left.and.right", title: "Linea \(s.username)", sub: expiry(s), value: app.vpn ? "VPN attiva" : "VPN spenta", chevron: false) {}
                 }
-                SettingRow(icon: "arrow.triangle.2.circlepath", title: "Sincronizzazione tra dispositivi",
-                           sub: synced > 0 ? "Profili, lista, preferiti e posizioni sono gli stessi su ogni dispositivo con questa linea. Ultima: \(TimeText.time(synced))." : "Profili, lista, preferiti e posizioni sono gli stessi su ogni dispositivo con questa linea.", chevron: false) {
+                #if os(tvOS)
+                SettingRow(icon: "iphone", title: "Cambia linea dal telefono", sub: "Inquadra un QR e scrivi nome utente e password con la tastiera del telefono.") {
+                    app.present("Cambia linea dal telefono", style: .page) {
+                        PhoneLoginPanel(onClose: { app.dismissSheet() }, closeLabel: "Chiudi", onDone: { app.dismissSheet(); app.say("Linea collegata") })
+                    }
+                }
+                #endif
+                SettingRow(icon: "arrow.triangle.2.circlepath", title: "Sincronizzazione tra dispositivi", sub: syncLine, chevron: false) {
                     core.sync.kick(after: 0); app.say("Sincronizzo…")
                 }
                 SettingRow(icon: "arrow.clockwise", title: app.syncStatus != nil ? "Aggiornamento in corso…" : "Aggiorna canali e guida TV",
@@ -354,13 +372,22 @@ struct SettingsView: View {
         #endif
         .onAppear {
             teams = core.teams.followed()
-            watches = [onMain(core.sync.lastSync) { synced = $0 }, onMain(core.prefs.values) { prefs = $0 }, onMain(core.settings.rev) { rev = $0 }, onMain(core.teams.changed) { _ in teams = core.teams.followed() }]
+            watches = [onMain(core.sync.lastSync) { synced = $0 }, onMain(core.sync.status) { cloud = $0 }, onMain(core.prefs.values) { prefs = $0 }, onMain(core.settings.rev) { rev = $0 }, onMain(core.teams.changed) { _ in teams = core.teams.followed() }]
             Task { engineVersion = await core.engine.version() }
         }
         .onDisappear { watches = [] }
     }
 
     private func hours(_ h: Int) -> String { h == 0 ? "Mai" : (h == 1 ? "1 ora" : "\(h) ore") }
+
+    /// Same wording as Android's settings: running, the last error, or when it last went well.
+    private var syncLine: String {
+        let everywhere = "Profili, lista, preferiti e posizioni sono gli stessi su ogni dispositivo con questa linea."
+        if cloud.running { return "Sincronizzo…" }
+        if let e = cloud.error { return e }
+        if synced > 0 { return "\(everywhere) Ultima: \(TimeText.time(synced))." }
+        return everywhere
+    }
 
     private func expiry(_ s: LineSession) -> String {
         guard let exp = s.expiringAt, !exp.isBlank else { return "Scadenza non disponibile" }

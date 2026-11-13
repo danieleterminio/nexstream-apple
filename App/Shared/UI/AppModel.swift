@@ -104,8 +104,7 @@ final class AppModel: ObservableObject {
     @Published var playerFull = false
     /// Taste picker to show right after a profile is created.
     @Published var onboardingFor: Int64? = nil
-    /// "Gestisci i profili" opened from the profile picker.
-    @Published var manageProfilesGate = false
+
     /// The downloads page opened from the VPN gate (what is downloaded plays without VPN and without network).
     @Published var offlineDownloads = false
     /// The phone remote opened from the VPN gate (it only talks to the home network).
@@ -270,8 +269,7 @@ final class AppModel: ObservableObject {
             core.sync.kick(after: 0.5)
         }
     }
-    /// "Riproduci su…": what to start on the TV once the remote screen is connected to it, and which TV.
-    var pendingCast: [String: Any]? = nil
+    /// "Riproduci su…": the TV the remote page opens on once the title is playing there.
     var remoteTarget: (address: String, name: String)? = nil
 
     /// Describes what is playing here, for another NexStream to carry on with (remote protocol, `/play`).
@@ -284,10 +282,8 @@ final class AppModel: ObservableObject {
         return nil
     }
 
-    /// Hands what is playing to a TV and turns this phone into its remote.
-    func cast(to address: String, name: String) {
-        guard let body = castBody() else { return }
-        pendingCast = body
+    /// The TV accepted what was playing here ("Riproduci su…"): the player closes and this phone becomes its remote.
+    func castSent(to address: String, name: String) {
         remoteTarget = (address, name)
         closePlayer()
         dismissAllSheets()

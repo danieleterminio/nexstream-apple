@@ -194,6 +194,7 @@ struct ProfilesView: View {
     var onDone: (() -> Void)? = nil
     @EnvironmentObject var app: AppModel
     @State private var profiles: [ProfileEntity] = []
+    @State private var loaded = false
     @State private var editing = false
 
     private var editMode: Bool { manage || editing }
@@ -201,12 +202,32 @@ struct ProfilesView: View {
 
     var body: some View {
         GateFrame(brand: !manage) {
+            if loaded && profiles.isEmpty && !manage {
+                // first start: the editor is the page, and there is no way around it (Android: ProfileEditor firstEver)
+                ScrollView(.vertical, showsIndicators: false) {
+                    ProfileEditor(profile: nil, taken: [], firstEver: true) { created in
+                        reload()
+                        if let c = created { app.onboardingFor = c.id; app.core.profiles.select(c) }
+                    }
+                    .frame(maxWidth: Metrics.u(480))
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, Metrics.u(Metrics.tv ? 70 : 50))
+                }
+            } else { picker }
+        }
+        .onAppear { reload(); if !manage { app.autoSelectProfile() } }
+    }
+
+    private var picker: some View {
             VStack(spacing: Metrics.u(26)) {
                 Text(editMode ? "Gestisci i profili" : "Chi guarda?").font(NxFont.display(24, .bold)).foregroundStyle(NxColor.text)
                 LazyVGrid(columns: columns, spacing: Metrics.u(22)) {
                     ForEach(profiles) { p in
                         tile(name: p.name, action: {
-                            if editMode { edit(p) } else if p.pin != nil { askPin(p) } else { app.core.profiles.select(p) }
+                            // a locked profile is edited only with its PIN
+                            if editMode { if p.pin != nil { askPin(p) { edit(p) } } else { edit(p) } }
+                            else if p.pin != nil { askPin(p) { app.core.profiles.select(p) } }
+                            else { app.core.profiles.select(p) }
                         }) {
                             ZStack {
                                 p.face(96).opacity(editMode ? 0.5 : 1)
@@ -236,11 +257,9 @@ struct ProfilesView: View {
                 else if !profiles.isEmpty { NxButton("Gestisci i profili", icon: "pencil", kind: .quiet) { editing = true } }
             }
             .padding(Metrics.u(24))
-        }
-        .onAppear { reload(); if !manage { app.autoSelectProfile() } }
     }
 
-    private func reload() { profiles = app.core.profiles.all() }
+    private func reload() { profiles = app.core.profiles.all(); loaded = true }
 
     private func edit(_ p: ProfileEntity?) {
         let taken = profiles
@@ -249,15 +268,19 @@ struct ProfilesView: View {
             ProfileEditor(profile: p, taken: taken) { created in
                 app.dismissSheet()
                 reload()
-                if let c = created, p == nil, select { app.onboardingFor = c.id; app.core.profiles.select(c) }
+                // a new profile starts with the taste picker, also from "Gestisci profili" (Android: onCreated → Onboarding)
+                if let c = created, p == nil {
+                    app.onboardingFor = c.id
+                    if select { app.core.profiles.select(c) }
+                }
             }
         }
     }
 
-    private func askPin(_ p: ProfileEntity) {
+    private func askPin(_ p: ProfileEntity, then: @escaping () -> Void) {
         app.present(nil, style: .dialog) {
             PinPad(title: "PIN di \(p.name)") { pin in
-                if pin == p.pin { app.dismissSheet(); app.core.profiles.select(p); return true }
+                if pin == p.pin { app.dismissSheet(); then(); return true }
                 return false
             } onCancel: { app.dismissSheet() }
         }
@@ -276,6 +299,8 @@ struct ProfilesView: View {
 struct ProfileEditor: View {
     let profile: ProfileEntity?
     let taken: [ProfileEntity]
+    /// The very first profile of the device: it must be created, there is nothing to go back to.
+    var firstEver = false
     let onClose: (ProfileEntity?) -> Void
     @EnvironmentObject var app: AppModel
     @State private var name = ""
@@ -287,6 +312,12 @@ struct ProfileEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Metrics.u(18)) {
+            if firstEver {
+                VStack(alignment: .leading, spacing: Metrics.u(4)) {
+                    Text("Crea il tuo profilo").font(NxFont.titleL).foregroundStyle(NxColor.text)
+                    Text("Potrai aggiungerne altri, anche per i bambini, dalle impostazioni.").font(NxFont.meta).foregroundStyle(NxColor.textDim)
+                }
+            }
             HStack(spacing: Metrics.u(16)) {
                 AvatarFace(name: name.isEmpty ? "?" : name, color: color, kids: maturity == 0, icon: icon, size: 72)
                 NxField {
@@ -295,6 +326,13 @@ struct ProfileEditor: View {
                         .onChange(of: name) { _, v in if v.count > 16 { name = String(v.prefix(16)) } }
                 }
             }
+            #if os(tvOS)
+            NxButton("Scrivilo dal telefono", icon: "iphone", kind: .quiet) {
+                app.present("Scrivi il nome dal telefono") {
+                    PhoneNamePanel(onName: { n in name = n; app.dismissSheet() }, onClose: { app.dismissSheet() })
+                }
+            }
+            #endif
             group("COLORE") {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: Metrics.u(44)), spacing: Metrics.u(10))], spacing: Metrics.u(10)) {
                     ForEach(0..<Avatars.colors.count, id: \.self) { i in
@@ -335,8 +373,9 @@ struct ProfileEditor: View {
             }
             if let e = error { Text(e).font(NxFont.meta).foregroundStyle(NxColor.ember) }
             VStack(spacing: Metrics.u(8)) {
-                NxButton("Salva", kind: .primary, wide: true) { save() }.disabled(name.trimmed.isEmpty)
-                if let p = profile {
+                NxButton(profile == nil ? "Crea profilo" : "Salva", kind: .primary, wide: true) { save() }.disabled(name.trimmed.isEmpty)
+                // the last profile cannot go: the app needs one
+                if let p = profile, taken.count > 1 {
                     NxButton("Elimina il profilo", icon: "trash", kind: .danger, wide: true) {
                         app.confirm("Eliminare \(p.name)?", message: "Preferiti, lista e cronologia di questo profilo vanno persi.", confirm: "Elimina profilo e dati", destructive: true) {
                             app.core.profiles.delete(p)

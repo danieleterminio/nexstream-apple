@@ -40,6 +40,14 @@ Serve un Mac con Xcode 26, oppure uno strumento di firma che supporti tvOS.
 
 Con un account a pagamento l'app dura un anno, poi va firmata di nuovo. I dati restano.
 
+**Righe nella Home dell'Apple TV (Top Shelf)**
+L'ipa tvOS contiene un'estensione (`PlugIns/NexStreamTopShelf.appex`, identificativo `app.nexstream.one.topshelf`) che mostra sopra l'icona di NexStream "Continua a guardare" e "I tuoi canali preferiti", come le righe nella Home di Android TV. Per averle:
+1. Nell'account sviluppatore crea un App Group `group.app.nexstream.one` e attivalo sia per `app.nexstream.one` sia per `app.nexstream.one.topshelf` (i due identificativi espliciti, non wildcard).
+2. Crea i due profili di sviluppo tvOS e firma l'ipa con entrambi (`fastlane sigh resign` accetta più profili: `--provisioning_profile "app.nexstream.one=app.mobileprovision" --provisioning_profile "app.nexstream.one.topshelf=topshelf.mobileprovision"`). I permessi sono anche in `docs\NexStreamTV.entitlements`.
+3. Sull'Apple TV metti NexStream nella prima riga delle app: le righe compaiono lì sopra. "Seleziona" apre il titolo o il canale, "Play" riprende il film o l'episodio dal punto lasciato.
+
+Senza l'App Group (profilo wildcard o strumento che non lo mette) l'app funziona uguale e sopra l'icona resta l'immagine fissa. Se lo strumento di firma non riesce a firmare l'estensione, usa `NexStream-…-tvos-noext-unsigned.ipa`: è la stessa app senza estensione.
+
 ## 4. Primo avvio
 
 1. **VPN**: l'app parte solo con una VPN attiva (NordVPN ha l'app sia per iPhone sia per Apple TV). Senza VPN resta sulla schermata "Accendi la VPN".
