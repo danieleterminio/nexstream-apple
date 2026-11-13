@@ -173,6 +173,15 @@ final class AppModel: ObservableObject {
                 if let c = core.channels.visible().first { play(c) }
             }
         }
+        if let secs = Demo.value("-nxCloseAfter").flatMap(Double.init) {
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(secs * 1_000_000_000))
+                NxLog.i("NxDebug", "closing the player as the close button does")
+                closePlayer()
+                NxLog.i("NxDebug", "player closed")
+            }
+        }
+        if Demo.args.contains("-nxForceVlc") { NxPlayer.forceVlc = true }
         if Demo.args.contains("-nxFull") {
             Task {
                 try? await Task.sleep(nanoseconds: 6_000_000_000)
@@ -182,7 +191,11 @@ final class AppModel: ObservableObject {
         if Demo.args.contains("-nxPlayVod") {
             Task {
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
-                if let d = try? await core.catalog.details("movie", 603) { play(PlayRequest(details: d)) }
+                // "-nxPlayVod tv:1396:4:5" plays that episode; without a value, The Matrix
+                let spec = (Demo.value("-nxPlayVod") ?? "").split(separator: ":").map(String.init)
+                if spec.count == 4, let id = Int(spec[1]), let se = Int(spec[2]), let ep = Int(spec[3]), let d = try? await core.catalog.details(spec[0], id) {
+                    play(PlayRequest(details: d, season: se, episode: ep))
+                } else if let d = try? await core.catalog.details("movie", 603) { play(PlayRequest(details: d)) }
             }
         }
     }

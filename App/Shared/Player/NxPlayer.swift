@@ -214,6 +214,7 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
     }
 
     private func fail() {
+        NxLog.w("NxPlayer", "\(engine == .vlc ? "VLC" : "system player") gave up on \(request?.url.prefix(90) ?? "-")")
         state = .error
         onError?()
     }
@@ -245,6 +246,7 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
     }
 
     private func startSystem(_ u: URL, headers: [String: String], startMs: Millis, live: Bool) {
+        NxLog.i("NxPlayer", "system player: \(u.absoluteString.prefix(90)) headers \(headers.keys.sorted())")
         engine = .system
         surface.show(.system)
         var opts = [String: Any]()
@@ -359,6 +361,7 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
     // MARK: VLC
 
     private func startVlc(_ req: Request) {
+        NxLog.i("NxPlayer", "VLC: \(req.url.prefix(90))")
         engine = .vlc
         surface.show(.vlc)
         let v = VLCMediaPlayer()
