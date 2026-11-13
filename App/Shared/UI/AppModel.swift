@@ -181,7 +181,7 @@ final class AppModel: ObservableObject {
                 NxLog.i("NxDebug", "player closed")
             }
         }
-        if Demo.args.contains("-nxForceVlc") { NxPlayer.forceVlc = true }
+        if Demo.enabled { NxPlayer.forceVlc = Demo.args.contains("-nxForceVlc") }
         if Demo.args.contains("-nxFull") {
             Task {
                 try? await Task.sleep(nanoseconds: 6_000_000_000)
