@@ -18,6 +18,12 @@ pack() { # scheme sdk destination label
   rm -rf "build/pack-$LABEL"; mkdir -p "build/pack-$LABEL/Payload"
   cp -R "$APP" "build/pack-$LABEL/Payload/"
   (cd "build/pack-$LABEL" && zip -qry "../../$OUT/NexStream-$VER-$LABEL-unsigned.ipa" Payload)
+  # tvOS: the same app without the Top Shelf extension, for signing tools / profiles that cannot sign a second bundle id
+  if [ -d "build/pack-$LABEL/Payload/NexStream.app/PlugIns" ]; then
+    ls "build/pack-$LABEL/Payload/NexStream.app/PlugIns"
+    rm -rf "build/pack-$LABEL/Payload/NexStream.app/PlugIns"
+    (cd "build/pack-$LABEL" && zip -qry "../../$OUT/NexStream-$VER-$LABEL-noext-unsigned.ipa" Payload)
+  fi
   ls -la "$OUT"/*.ipa
 }
 pack NexStream iphoneos "generic/platform=iOS" ios

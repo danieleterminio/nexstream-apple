@@ -127,6 +127,8 @@ final class RemoteClient {
 /// The phone as the TV's remote: pick the TV (found on the network or by address), pair once with the PIN it shows, then
 /// arrows, OK, back, volume, channels and search with the phone keyboard — all on one screen.
 struct RemoteView: View {
+    /// Opened from the VPN gate: no stack of pages behind it, a "Chiudi" takes it away.
+    var onClose: (() -> Void)? = nil
     @EnvironmentObject var app: AppModel
     @State private var client = RemoteClient()
     @State private var tv: RemoteClient.Tv? = nil
@@ -151,7 +153,9 @@ struct RemoteView: View {
         Group {
             if let t = tv { pad(t) } else if let a = pairingAddress { pairing(a) } else { picker }
         }
-        .nxScreen(tv?.name ?? "Telecomando")
+        .nxScreen(tv?.name ?? "Telecomando", back: onClose == nil) {
+            if let close = onClose { NxButton("Chiudi", kind: .quiet, action: close) }
+        }
         .onAppear {
             saved = client.saved()
             finder.start(type: RemoteClient.service, onProblem: { p in if let p = p { message = p } }) { found = $0 }
@@ -163,6 +167,7 @@ struct RemoteView: View {
             }
         }
         .onDisappear { finder.stop() }
+        .task { await debugPairing() }
         .task(id: tv?.address ?? "") {
             // what the TV is playing, while this screen is open
             guard let t = tv, version >= 2 else { return }
@@ -259,20 +264,51 @@ struct RemoteView: View {
             if let m = message { Text(m).font(NxFont.meta).foregroundStyle(NxColor.accentBright) }
             HStack(spacing: 10) {
                 NxButton("Annulla", kind: .quiet) { pairingAddress = nil; message = nil }
-                NxButton(busy ? "Un momento…" : "Abbina", kind: .primary) {
-                    busy = true; message = nil
-                    Task {
-                        let r = await client.pair(address, pin: pin)
-                        busy = false
-                        if let tok = r.json["token"].stringOrNil {
-                            pairingAddress = nil
-                            connect(address, name: pairingName, token: tok)
-                        } else { message = r.error ?? "Non riesco ad abbinare la TV." }
-                    }
-                }.disabled(pin.count != 4 || busy)
+                NxButton(busy ? "Un momento…" : "Abbina", kind: .primary) { pair(address) }.disabled(pin.count != 4 || busy)
             }
         }
         .padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func pair(_ address: String) {
+        busy = true; message = nil
+        Task {
+            let r = await client.pair(address, pin: pin)
+            busy = false
+            NxLog.i("NxRemote", "pair \(address): \(r.status)")
+            if let tok = r.json["token"].stringOrNil {
+                pairingAddress = nil
+                connect(address, name: pairingName, token: tok)
+            } else { message = r.error ?? "Non riesco ad abbinare la TV." }
+        }
+    }
+
+    /// Build pipeline (-nxRemotePin <pin>, the TV started with -nxFixedPin): finds the TV by Bonjour (else this machine),
+    /// pairs, sends a few keys — the whole remote path, with the VPN off on both sides.
+    private func debugPairing() async {
+        guard Demo.enabled, let code = Demo.value("-nxRemotePin") else { return }
+        var address: String? = nil
+        var name = "TV"
+        for _ in 0..<20 {
+            if let d = found.first { name = d.label; address = await RemoteClient.resolve(d.endpoint); break }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+        NxLog.i("NxDebug", "remote test: found \(found.map { $0.label }) -> \(address ?? "none")")
+        connect(address ?? "127.0.0.1:\(RemoteClient.defaultPort)", name: name, token: nil)
+        for _ in 0..<15 where pairingAddress == nil { try? await Task.sleep(nanoseconds: 1_000_000_000) }
+        guard let a = pairingAddress else { NxLog.i("NxDebug", "remote test: no pairing step (\(message ?? "-"))"); return }
+        try? await Task.sleep(nanoseconds: 8_000_000_000)   // time for the TV's code to be on screen
+        pin = code
+        pair(a)
+        for _ in 0..<15 where tv == nil { try? await Task.sleep(nanoseconds: 1_000_000_000) }
+        guard let t = tv else { NxLog.i("NxDebug", "remote test: not paired (\(message ?? "-"))"); return }
+        for k in ["down", "ok", "playpause"] {
+            let r = await client.key(t, k)
+            NxLog.i("NxDebug", "remote test: key \(k) -> \(r.status) \(r.text)")
+        }
+        let st = await client.state(t)
+        let count = await client.channels(t)?.count ?? -1
+        NxLog.i("NxDebug", "remote test: state \(st.map { "playing=\($0.playing)" } ?? "none"), channels \(count)")
     }
 
     private func send(_ t: RemoteClient.Tv, _ k: String) {
@@ -292,7 +328,8 @@ struct RemoteView: View {
                         Text(now.sub).font(NxFont.caption).foregroundStyle(NxColor.textMuted).lineLimit(1)
                     }
                     Spacer(minLength: 0)
-                    NxButton("Riprendi qui", icon: "iphone") { resumeHere(t) }
+                    // carrying on here needs this phone able to play: the VPN on and a profile chosen (never from the gate)
+                    if app.vpn && app.profile != nil { NxButton("Riprendi qui", icon: "iphone") { resumeHere(t) } }
                 }
                 if now.kind == "vod" && now.dur > 0 {
                     HStack(spacing: 8) {
@@ -478,7 +515,10 @@ final class RemoteHost: ObservableObject {
             let now = Clock.now
             if pairing == nil || pairing!.until < now {
                 wrongPins = 0
-                pairing = PairRequest(phone: body["name"].stringOrNil?.take(40) ?? "Telefono", pin: String(Int.random(in: 1000...9999)), until: now + 120_000)
+                // -nxFixedPin: the build pipeline pairs a simulated phone with this TV without reading the screen
+                let pin = Demo.enabled ? (Demo.value("-nxFixedPin") ?? String(Int.random(in: 1000...9999))) : String(Int.random(in: 1000...9999))
+                pairing = PairRequest(phone: body["name"].stringOrNil?.take(40) ?? "Telefono", pin: pin, until: now + 120_000)
+                NxLog.i("NxRemote", "pairing asked by \(pairing?.phone ?? "?")")
             }
             return .json(200, "{\"ok\":true}")
         case "/pair":
@@ -490,6 +530,7 @@ final class RemoteHost: ObservableObject {
             }
             let t = Lan.token(32, alphabet: "abcdefghijkmnpqrstuvwxyz23456789")
             addToken(t, p.phone); pairing = nil
+            NxLog.i("NxRemote", "paired \(p.phone)")
             return .json(200, jsonString(["ok": true, "token": t, "name": Lan.deviceName()] as [String: Any]))
         default: break
         }
@@ -497,6 +538,7 @@ final class RemoteHost: ObservableObject {
         switch r.path {
         case "/key":
             guard let k = body["k"].stringOrNil else { return .json(200, "{\"ok\":false}") }
+            NxLog.i("NxRemote", "key \(k)")
             NotificationCenter.default.post(name: .nxRemoteKey, object: k)
             return .json(200, "{\"ok\":true}")
         case "/home": NotificationCenter.default.post(name: .nxRemoteKey, object: "home"); return .json(200, "{\"ok\":true}")
@@ -514,6 +556,8 @@ final class RemoteHost: ObservableObject {
             return .json(200, "{\"ok\":true}")
         case "/play":
             let app = AppModel.shared
+            // the TV must be able to play it: nothing streams without the VPN (same answer as Android's RemoteHost)
+            if !Vpn.shared.active.value { return .json(200, "{\"ok\":false,\"error\":\"Attiva la VPN sulla TV\"}") }
             if let u = body["profile"].stringOrNil, let pid = core.sync.profileId(uuid: u), pid != core.profiles.id, let p = core.db.profile(pid), p.pin == nil { core.profiles.select(p) }
             if core.profiles.id <= 0 { app.autoSelectProfile() }
             guard core.profiles.id > 0 else { return .json(200, "{\"ok\":false,\"error\":\"Scegli un profilo sulla TV\"}") }

@@ -35,10 +35,44 @@ run_one() { # label productdir device-regex
   local DATA
   DATA=$(xcrun simctl get_app_container "$UDID" "$BUNDLE" data 2>/dev/null)
   if [ -n "$DATA" ] && [ -f "$DATA/Library/Caches/nx.log" ]; then cp "$DATA/Library/Caches/nx.log" "$OUT/$LABEL-app.log"; echo "--- [$LABEL] app log (tail)"; tail -40 "$OUT/$LABEL-app.log"; fi
+  # Top Shelf: the extension in the bundle and the feed the app wrote in the App Group folder
+  ls "$APP/PlugIns" 2>/dev/null && echo "[$LABEL] PlugIns: $(ls "$APP/PlugIns" | tr '
+' ' ')"
+  local GROUP
+  GROUP=$(xcrun simctl get_app_container "$UDID" "$BUNDLE" group.app.nexstream.one 2>/dev/null)
+  if [ -n "$GROUP" ]; then echo "[$LABEL] app group: $GROUP"; [ -f "$GROUP/topshelf.json" ] && cp "$GROUP/topshelf.json" "$OUT/$LABEL-topshelf.json"; fi
   # crash reports of this run, if any
   find ~/Library/Logs/DiagnosticReports -name "NexStream*" -newer "$APP" -exec cp {} "$OUT/" \; 2>/dev/null || true
   xcrun simctl shutdown "$UDID" || true
 }
+
+# Phone remote with the VPN off on both sides: the Apple TV app hosts, the iPhone app (on the VPN gate) finds it by
+# Bonjour, pairs with a fixed PIN and sends keys. Both simulators share this machine's network.
+pair_test() {
+  local TVAPP="build/dd/Build/Products/Debug-appletvsimulator/NexStream.app" PHAPP="build/dd/Build/Products/Debug-iphonesimulator/NexStream.app"
+  [ -d "$TVAPP" ] && [ -d "$PHAPP" ] || { echo "[pair] both apps needed"; return; }
+  local TV PH
+  TV=$(xcrun simctl list devices available -j | python3 scripts/pick_sim.py "Apple TV 4K (3rd generation)" tvOS)
+  PH=$(xcrun simctl list devices available -j | python3 scripts/pick_sim.py "iPhone 17 Pro" iOS)
+  echo "[pair] tv $TV phone $PH"
+  for U in $TV $PH; do xcrun simctl boot "$U" || true; xcrun simctl bootstatus "$U" -b > /dev/null 2>&1 || true; done
+  xcrun simctl install "$TV" "$TVAPP"; xcrun simctl install "$PH" "$PHAPP"
+  xcrun simctl launch "$TV" "$BUNDLE" -nxDemo -nxSeed -nxVpnOff -nxFixedPin 4321
+  sleep 15
+  xcrun simctl launch "$PH" "$BUNDLE" -nxDemo -nxSeed -nxVpnOff -nxGateRemote -nxRemotePin 4321
+  sleep 14
+  xcrun simctl io "$TV" screenshot "$OUT/pair-tv-pin.png" > /dev/null 2>&1
+  xcrun simctl io "$PH" screenshot "$OUT/pair-phone-pin.png" > /dev/null 2>&1
+  sleep 20
+  xcrun simctl io "$TV" screenshot "$OUT/pair-tv-after.png" > /dev/null 2>&1
+  xcrun simctl io "$PH" screenshot "$OUT/pair-phone-pad.png" > /dev/null 2>&1
+  local D
+  D=$(xcrun simctl get_app_container "$TV" "$BUNDLE" data 2>/dev/null); [ -f "$D/Library/Caches/nx.log" ] && cp "$D/Library/Caches/nx.log" "$OUT/pair-tv-app.log"
+  D=$(xcrun simctl get_app_container "$PH" "$BUNDLE" data 2>/dev/null); [ -f "$D/Library/Caches/nx.log" ] && cp "$D/Library/Caches/nx.log" "$OUT/pair-phone-app.log"
+  grep -h "NxRemote\|NxDebug" "$OUT"/pair-*-app.log 2>/dev/null | tail -40
+  xcrun simctl shutdown "$TV" || true; xcrun simctl shutdown "$PH" || true
+}
+if [ "$WHAT" = "pair" ] || [ -n "$NX_PAIR" ]; then pair_test; fi
 
 if [ "$WHAT" = "ios" ] || [ "$WHAT" = "all" ]; then run_one ios iphonesimulator "iPhone 17 Pro" iOS; fi
 if [ "$WHAT" = "tv" ] || [ "$WHAT" = "all" ]; then run_one tv appletvsimulator "Apple TV 4K (3rd generation)" tvOS; fi

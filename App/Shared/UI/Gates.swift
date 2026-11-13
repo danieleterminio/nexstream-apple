@@ -21,37 +21,80 @@ struct GateFrame<Content: View>: View {
 
 // ---------------------------------------------------------------------------------------------------------------- VPN
 
-/// Nothing leaves the device without the VPN: this screen stays until one is up, then goes away by itself.
+/// Nothing leaves the device without the VPN: this screen stays until one is up, then goes away by itself. "Riprova" reads
+/// the state again at once. On iPhone / iPad what does not need the internet stays reachable: the downloads (they play
+/// from the device) and the remote of the TV (it only talks to the home network). Same buttons as Android's VpnGateScreen.
 struct VpnGateView: View {
     @EnvironmentObject var app: AppModel
     @Environment(\.openURL) private var openURL
+    @State private var checking = false
+    @State private var vpnApp: VpnApps.Link? = nil
 
     var body: some View {
         GateFrame {
-            VStack(spacing: Metrics.u(14)) {
-                Image(systemName: "lock.shield.fill").font(.system(size: 54 * Metrics.unit, weight: .regular)).foregroundStyle(.white)
-                Text("Accendi la VPN").font(NxFont.titleXL).foregroundStyle(NxColor.text)
-                Text("Apri l'app della VPN, collegati e torna qui: la schermata sparisce da sola.")
-                    .font(NxFont.body).foregroundStyle(NxColor.textMuted).multilineTextAlignment(.center)
-                HStack(spacing: 6) {
-                    Circle().fill(NxColor.accent).frame(width: Metrics.u(8), height: Metrics.u(8))
-                    Text("VPN non rilevata").font(NxFont.caption).foregroundStyle(NxColor.textDim)
-                }
-                #if os(iOS)
-                VStack(spacing: 10) {
-                    NxButton("Apri NordVPN", icon: "arrow.up.forward.app", kind: .primary, wide: true) {
-                        if let u = URL(string: "nordvpn://") { openURL(u) { ok in if !ok, let s = URL(string: "App-prefs:") { openURL(s) } } }
+            GeometryReader { g in
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: Metrics.u(14)) {
+                    Image(systemName: "lock.shield.fill").font(.system(size: 54 * Metrics.unit, weight: .regular)).foregroundStyle(.white)
+                    Text("Accendi la VPN").font(NxFont.titleXL).foregroundStyle(NxColor.text).multilineTextAlignment(.center)
+                    Text("Apri l'app della VPN, collegati e torna qui: la schermata sparisce da sola.")
+                        .font(NxFont.body).foregroundStyle(NxColor.textMuted).multilineTextAlignment(.center)
+                    HStack(spacing: 6) {
+                        Circle().fill(NxColor.accent).frame(width: Metrics.u(8), height: Metrics.u(8))
+                        Text(checking ? "Controllo…" : "VPN non rilevata").font(NxFont.caption).foregroundStyle(NxColor.textDim)
                     }
-                    if app.core.db.downloads().contains(where: { $0.state == "done" }) {
+                    VStack(spacing: Metrics.u(10)) {
+                        if let v = vpnApp {
+                            NxButton("Apri \(v.name)", icon: "arrow.up.forward.app", kind: .primary, wide: true) { openURL(v.url) }
+                        } else {
+                            // no known VPN app found: the system settings (VPN lives there), NordVPN's link first just in case
+                            NxButton("Apri l'app della VPN", icon: "arrow.up.forward.app", kind: .primary, wide: true) {
+                                if let u = URL(string: "nordvpn://") {
+                                    openURL(u) { ok in if !ok, let s = URL(string: UIApplication.openSettingsURLString) { openURL(s) } }
+                                }
+                            }
+                        }
+                        NxButton("Riprova", icon: "arrow.clockwise", wide: true) { retry() }
+                        #if os(iOS)
+                        // what is downloaded plays without the VPN; the remote never leaves the home network
                         NxButton("Guarda i download", icon: "arrow.down.to.line", wide: true) { app.offlineDownloads = true }
+                        NxButton("Telecomando della TV", icon: "appletvremote.gen4", wide: true) { app.gateRemote = true }
+                        #endif
                     }
+                    .padding(.top, Metrics.u(10))
+                    #if os(tvOS)
+                    .focusSection()
+                    #endif
                 }
-                .padding(.top, 10)
-                #endif
+                .padding(Metrics.u(28))
+                .frame(maxWidth: Metrics.u(400))
+                .padding(.top, Metrics.u(Metrics.tv ? 60 : 40))
+                .frame(maxWidth: .infinity, minHeight: g.size.height)
             }
-            .padding(Metrics.u(28))
-            .frame(maxWidth: Metrics.u(400))
+            }
         }
+        .onAppear { vpnApp = VpnApps.installed() }
+    }
+
+    private func retry() {
+        checking = true
+        Vpn.shared.refresh()
+        Task { try? await Task.sleep(nanoseconds: 1_200_000_000); checking = false }
+    }
+}
+
+/// The VPN apps whose link we know, first installed one wins (Android: Vpn.VPN_APPS). The schemes are listed in
+/// LSApplicationQueriesSchemes, otherwise the system always says "not installed".
+enum VpnApps {
+    struct Link { let name: String; let url: URL }
+    private static let known: [(String, String)] = [
+        ("NordVPN", "nordvpn://"), ("ExpressVPN", "expressvpn://"), ("Surfshark", "surfshark://"), ("Proton VPN", "protonvpn://"),
+        ("PIA VPN", "piavpn://"), ("Mullvad VPN", "mullvadvpn://"), ("WireGuard", "wireguard://"),
+    ]
+    static let schemes = known.map { $0.1.replacingOccurrences(of: "://", with: "") }
+    @MainActor static func installed() -> Link? {
+        for (name, link) in known { if let u = URL(string: link), UIApplication.shared.canOpenURL(u) { return Link(name: name, url: u) } }
+        return nil
     }
 }
 

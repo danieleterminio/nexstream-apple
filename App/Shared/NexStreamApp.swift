@@ -65,6 +65,7 @@ struct RootView: View {
         .onAppear {
             #if os(tvOS)
             RemoteHost.shared.start()
+            TopShelfHook.start()
             #else
             app.core.downloads.wake()
             #endif
@@ -75,7 +76,9 @@ struct RootView: View {
     @ViewBuilder private var content: some View {
         if !app.vpn {
             #if os(iOS)
-            if app.offlineDownloads { DownloadsView(offline: true) } else { VpnGateView() }
+            if app.offlineDownloads { DownloadsView(offline: true) }
+            else if app.gateRemote { RemoteView(onClose: { app.gateRemote = false }) }
+            else { VpnGateView() }
             #else
             VpnGateView()
             #endif

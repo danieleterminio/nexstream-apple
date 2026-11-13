@@ -33,6 +33,8 @@ final class NexCore {
     let sync: SyncEngine
     /// Offline downloads (iPhone).
     lazy var downloads: Downloads = Downloads(core: self)
+    /// Apple TV home (Top Shelf): "Continua a guardare" and favourite channels for the extension.
+    lazy var topShelf: TopShelfPublisher = TopShelfPublisher(core: self)
 
     /// "Aggiorno i canali…" style status for the UI, nil when idle.
     let syncStatus = Observable<String?>(nil)
@@ -42,6 +44,8 @@ final class NexCore {
     let pendingOpen = Observable<(String, Int64)?>(nil)
     /// VOD title to open from a link: (media, tmdbId, profileId).
     let pendingOpenVod = Observable<(String, Int, Int64)?>(nil)
+    /// VOD title to play from where it was left (Top Shelf play button): (media, tmdbId, profileId).
+    let pendingResume = Observable<(String, Int, Int64)?>(nil)
     /// Programme page to open from a link: (streamId, programmeId, profileId).
     let pendingOpenProgramme = Observable<(String, Int64, Int64)?>(nil)
     /// A search typed on the phone remote, consumed by the search screen.
@@ -262,6 +266,7 @@ final class NexCore {
         if seg.count == 1 && seg[0] == "downloads" { openDownloads.value = true }
         else if seg.count == 2 && seg[0] == "live" { pendingOpen.value = (seg[1], pid) }
         else if seg.count == 3 && seg[0] == "vod", let id = Int(seg[2]) { pendingOpenVod.value = (seg[1], id, pid) }
+        else if seg.count == 3 && seg[0] == "resume", let id = Int(seg[2]) { pendingResume.value = (seg[1], id, pid) }
         else if seg.count == 3 && seg[0] == "programme", let id = Int64(seg[2]) { pendingOpenProgramme.value = (seg[1], id, pid) }
         else if seg.count == 2 && seg[0] == "follow" {
             let target = pid > 0 ? pid : (profiles.id > 0 ? profiles.id : profiles.lastId)

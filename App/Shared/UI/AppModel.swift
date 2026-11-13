@@ -108,6 +108,8 @@ final class AppModel: ObservableObject {
     @Published var manageProfilesGate = false
     /// The downloads page opened from the VPN gate (what is downloaded plays without VPN and without network).
     @Published var offlineDownloads = false
+    /// The phone remote opened from the VPN gate (it only talks to the home network).
+    @Published var gateRemote = false
     @Published var toast: String? = nil
     /// Phone: which half of "Diretta" is in view (0 = channels, 1 = guide). Remembered.
     @Published var liveTab: Int = UserDefaults.standard.integer(forKey: "nx.liveTab") { didSet { UserDefaults.standard.set(liveTab, forKey: "nx.liveTab") } }
@@ -132,6 +134,8 @@ final class AppModel: ObservableObject {
             self.vpn = v
             // nothing streams without the VPN: only a downloaded file may go on
             if !v, let p = self.playing, !p.isOffline { self.closePlayer() }
+            // the pages opened from the gate belong to it (Android: state kept inside `if (!vpn)`)
+            if v { self.offlineDownloads = false; self.gateRemote = false; self.consumePending() }
         })
         watches.append(onMain(core.session.current) { [weak self] s in self?.session = s })
         watches.append(onMain(core.profiles.current) { [weak self] p in
@@ -146,6 +150,16 @@ final class AppModel: ObservableObject {
         watches.append(onMain(core.pendingOpen) { [weak self] _ in self?.consumePending() })
         watches.append(onMain(core.pendingOpenVod) { [weak self] _ in self?.consumePending() })
         watches.append(onMain(core.pendingOpenProgramme) { [weak self] _ in self?.consumePending() })
+        watches.append(onMain(core.pendingResume) { [weak self] _ in self?.consumePending() })
+        // nexstream://open/downloads: the page of the downloads, also from the VPN gate
+        watches.append(onMain(core.openDownloads) { [weak self] on in
+            guard let self = self, on else { return }
+            self.core.openDownloads.value = false
+            #if os(iOS)
+            if !self.vpn { self.offlineDownloads = true }
+            else if self.profile != nil, self.paths[self.section]?.last != .downloads { self.open(.downloads) }
+            #endif
+        })
         watches.append(onMain(core.pendingSearch) { [weak self] q in
             guard let self = self, let q = q else { return }
             self.pendingSearch = q; self.section = .search; self.core.pendingSearch.value = nil
@@ -167,6 +181,9 @@ final class AppModel: ObservableObject {
             default: break
             }
         }
+        // the pages the VPN gate opens (screenshots of the gate with -nxVpnOff)
+        if Demo.args.contains("-nxGateRemote") { gateRemote = true }
+        if Demo.args.contains("-nxGateDownloads") { offlineDownloads = true }
         if Demo.args.contains("-nxPlayFirst") {
             Task {
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
@@ -232,7 +249,8 @@ final class AppModel: ObservableObject {
         if let l = live { l.stop(); live = nil }
         if let v = vod { v.close(); vod = nil }
         PlatformServices.shared.playerOpened()
-        let m = VodPlayerModel(request: r, pid: pid)
+        // from the VPN gate (downloads) there may be no profile chosen yet: positions go to the last one
+        let m = VodPlayerModel(request: r, pid: pid > 0 ? pid : core.profiles.lastId)
         m.onNext = { [weak self] n in self?.play(n) }
         m.player.onRestoreUI = { [weak self] in self?.playerHidden = false }
         vod = m
@@ -299,7 +317,7 @@ final class AppModel: ObservableObject {
     func autoSelectProfile() {
         if autoTried || core.profiles.pickRequested { return }
         autoTried = true
-        let wanted = core.pendingOpen.value?.1 ?? core.pendingOpenVod.value?.2 ?? 0
+        let wanted = core.pendingOpen.value?.1 ?? core.pendingOpenVod.value?.2 ?? core.pendingResume.value?.2 ?? 0
         if wanted > 0, let p = core.profiles.all().first(where: { $0.id == wanted && $0.pin == nil }) { core.profiles.select(p) }
         else { core.profiles.autoSelect() }
     }
@@ -307,7 +325,8 @@ final class AppModel: ObservableObject {
 
     /// A notification or a link was opened: go there once the gates are passed.
     private func consumePending() {
-        guard profile != nil else { return }
+        // a channel asked for while the VPN was off (phone remote, Top Shelf) opens once it is on
+        guard profile != nil, vpn else { return }
         if let (sid, _) = core.pendingOpen.value {
             core.pendingOpen.value = nil
             if let c = core.channels.get(sid), core.channels.isVisible(c) { play(c) }
@@ -319,6 +338,13 @@ final class AppModel: ObservableObject {
         if let (media, id, _) = core.pendingOpenVod.value {
             core.pendingOpenVod.value = nil
             open(.title(media, id))
+        }
+        if let (media, id, _) = core.pendingResume.value {
+            // Top Shelf "play": from where it was left (the title page when the details cannot be loaded)
+            core.pendingResume.value = nil
+            Task {
+                if let d = try? await core.catalog.details(media, id) { playTitle(d) } else { open(.title(media, id)) }
+            }
         }
     }
 

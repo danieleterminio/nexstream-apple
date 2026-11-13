@@ -9,6 +9,9 @@ on:
       shots:
         description: "screenshots: name:seconds:launch args|name:seconds:args (empty = one after 25 s)"
         default: ""
+      pair:
+        description: "1 = also pair the iPhone simulator as remote of the Apple TV simulator (VPN off on both)"
+        default: ""
 
 concurrency:
   group: build-${{ github.ref }}
@@ -21,6 +24,7 @@ jobs:
     env:
       WHAT: ${{ github.event.inputs.what || 'sim' }}
       NX_SHOTS: ${{ github.event.inputs.shots }}
+      NX_PAIR: ${{ github.event.inputs.pair }}
     steps:
       - uses: actions/checkout@v4
 

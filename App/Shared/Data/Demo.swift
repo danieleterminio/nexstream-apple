@@ -55,6 +55,13 @@ enum Demo {
                 core.db.setMeta("teams.\(id)", jsonString([["n": "Juventus", "c": "https://a.espncdn.com/i/teamlogos/soccer/500/111.png"]]))
             }
         }
+        if args.contains("-nxSeedDownload") && core.db.downloads().isEmpty, let pid = core.db.profiles().first?.id {
+            // the downloads page as the VPN gate shows it: one saved, one waiting for the VPN
+            core.db.upsertDownload(DownloadEntity(id: "movie-603-0-0", profileId: pid, tmdbId: 603, media: "movie", season: 0, episode: 0, title: "Matrix", sub: "1999",
+                                                  poster: "/aOIuZAjPaRIE6CMzbazvcHuHXDc.jpg", backdrop: nil, state: "done", progress: 1, bytes: 1_450_000_000, file: "movie-603-0-0.mp4"))
+            core.db.upsertDownload(DownloadEntity(id: "tv-1396-1-4", profileId: pid, tmdbId: 1396, media: "tv", season: 1, episode: 4, title: "Breaking Bad", sub: "S1 E4 · Cancer Man",
+                                                  poster: "/ztkUQFLlC19CCMYHW9o1zWhJRNq.jpg", backdrop: nil, state: "queued", progress: 0, bytes: 0, file: nil))
+        }
         if !args.contains("-nxPicker"), core.profiles.current.value == nil, let p = core.db.profiles().first { core.profiles.select(p) }
     }
 }

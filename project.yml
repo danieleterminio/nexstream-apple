@@ -65,6 +65,7 @@ targets:
           NSAllowsArbitraryLoads: true
         NSLocalNetworkUsageDescription: NexStream usa la rete di casa per fare da telecomando alla TV e per passare linea e profili tra i tuoi dispositivi.
         NSBonjourServices: [_nexremote._tcp, _nexstream._tcp]
+        LSApplicationQueriesSchemes: [nordvpn, expressvpn, surfshark, protonvpn, piavpn, mullvadvpn, wireguard]
         NSCameraUsageDescription: La fotocamera serve a leggere il codice QR mostrato dalla TV.
         CFBundleURLTypes:
           - CFBundleURLName: app.nexstream.one
@@ -126,6 +127,7 @@ targets:
           NSAllowsArbitraryLoads: true
         NSLocalNetworkUsageDescription: NexStream usa la rete di casa per ricevere i comandi dal telefono e per passare linea e profili tra i tuoi dispositivi.
         NSBonjourServices: [_nexremote._tcp, _nexstream._tcp]
+        LSApplicationQueriesSchemes: [nordvpn, expressvpn, surfshark, protonvpn, piavpn, mullvadvpn, wireguard]
         CFBundleURLTypes:
           - CFBundleURLName: app.nexstream.one
             CFBundleURLSchemes: [nexstream]
@@ -135,7 +137,13 @@ targets:
         PRODUCT_NAME: NexStream
         TARGETED_DEVICE_FAMILY: "3"
         ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon & Top Shelf Image"
+    # Top Shelf feed shared with the extension; only effective when the signing profile has this App Group
+    entitlements:
+      path: build/gen/NexStreamTV.entitlements
+      properties:
+        com.apple.security.application-groups: [group.app.nexstream.one]
     dependencies:
+      - target: NexStreamTopShelf
       - framework: Frameworks/tvOS/Python.xcframework
         embed: true
       - framework: Frameworks/tvOS/TVVLCKit.xcframework
@@ -150,6 +158,34 @@ targets:
         script: |
           "$PROJECT_DIR/scripts/install_python.sh" tvOS
         basedOnDependencyAnalysis: false
+  # Apple TV home rows above the icon ("Continua a guardare", favourite channels): reads the feed the app writes
+  NexStreamTopShelf:
+    type: app-extension
+    platform: tvOS
+    sources:
+      - path: App/TopShelf
+      - path: App/Shared/Core/TopShelfFeed.swift
+    info:
+      path: build/gen/TopShelf-Info.plist
+      properties:
+        CFBundleDisplayName: NexStream
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.tv-top-shelf
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ContentProvider
+    entitlements:
+      path: build/gen/NexStreamTopShelf.entitlements
+      properties:
+        com.apple.security.application-groups: [group.app.nexstream.one]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.nexstream.one.topshelf
+        PRODUCT_NAME: NexStreamTopShelf
+        TARGETED_DEVICE_FAMILY: "3"
+        SWIFT_OBJC_BRIDGING_HEADER: ""
+        APPLICATION_EXTENSION_API_ONLY: "YES"
+        SKIP_INSTALL: "YES"
 schemes:
   NexStream:
     build:
