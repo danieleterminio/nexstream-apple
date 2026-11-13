@@ -177,7 +177,7 @@ struct ProfilesView: View {
                             .frame(width: Metrics.u(96), height: Metrics.u(96))
                         }
                     }
-                    if profiles.count < 8 {
+                    if profiles.count < 5 {
                         tile(name: "Aggiungi", action: { edit(nil) }) {
                             ZStack {
                                 RoundedRectangle(cornerRadius: Metrics.u(96) * 0.26, style: .continuous).stroke(NxColor.ink5, lineWidth: Metrics.u(1.5))

@@ -35,6 +35,7 @@ final class SyncEngine {
     private let lock = AsyncLock()
     private var pending: Task<Void, Never>? = nil
     private var applying = false
+    private var lastRound = Date.distantPast
     private let d = UserDefaults.standard
 
     /// What this device remembers about an account between rounds.
@@ -60,12 +61,16 @@ final class SyncEngine {
 
     // MARK: when
 
-    /// Asks for a round soon. Calls made while one is waiting are merged.
-    func kick(after seconds: Double = 2) {
+    /// Asks for a round soon. Calls made while one is waiting are merged. Without a delay it is "something changed
+    /// here": those rounds wait two seconds and stay at least 15 seconds apart (a player saves its position every
+    /// few seconds). A caller that names a delay (sign-in, foreground, the minute tick, a player closing) is not held.
+    func kick(after seconds: Double? = nil) {
         if applying { return }
+        var wait = seconds ?? 2
+        if seconds == nil { wait = max(wait, 15 - Date().timeIntervalSince(lastRound)) }
         pending?.cancel()
         pending = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            try? await Task.sleep(nanoseconds: UInt64(max(0, wait) * 1_000_000_000))
             if Task.isCancelled { return }
             await self?.run()
         }
@@ -92,6 +97,7 @@ final class SyncEngine {
         let aid = SyncCrypto.accountId(user: user, pass: pass)
         let key = SyncCrypto.key(user: user, pass: pass)
         if loadedFor != aid { load(aid) }
+        lastRound = Date()
         do {
             if !state.started { try await firstContact(aid, key) }
             try await round(aid, key)
@@ -370,6 +376,7 @@ final class SyncEngine {
         let me = deviceName()
         var changes = [[String: Any]]()
         var sentHash = [String: String?]()
+        var sentTime = [String: Int64]()
         for (k, v) in local {
             let h = canonical(v)
             if state.snap[k] == h { continue }
@@ -378,12 +385,16 @@ final class SyncEngine {
             guard let plain = try? JSONSerialization.data(withJSONObject: ["k": k, "v": out] as [String: Any]), let sealed = SyncCrypto.seal(key, plain) else { continue }
             let kid = SyncCrypto.kid(key, k)
             state.names[kid] = k
-            changes.append(["k": kid, "t": now, "d": sealed])
+            let t = max(now, (state.times[k] ?? 0) + 1)
+            changes.append(["k": kid, "t": t, "d": sealed])
             sentHash[k] = h
+            sentTime[k] = t
         }
         for k in state.snap.keys where local[k] == nil {
-            changes.append(["k": SyncCrypto.kid(key, k), "t": now, "d": NSNull()])
+            let t = max(now, (state.times[k] ?? 0) + 1)
+            changes.append(["k": SyncCrypto.kid(key, k), "t": t, "d": NSNull()])
             sentHash[k] = Optional<String>.none
+            sentTime[k] = t
         }
         var incoming = [Incoming]()
         var since = state.seq
@@ -402,7 +413,7 @@ final class SyncEngine {
             }
         }
         for (k, h) in sentHash {
-            state.times[k] = now
+            state.times[k] = sentTime[k] ?? now
             if let h = h { state.snap[k] = h } else { state.snap[k] = nil; state.devs[k] = nil }
         }
         state.seq = since
