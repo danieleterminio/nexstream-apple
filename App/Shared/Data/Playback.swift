@@ -36,9 +36,10 @@ final class PlaybackResolver {
         let type = d.isTv ? "tvshow" : "movie"
 
         // 1) cached match for this TMDB title
+        var ignored = Set<String>()
         if let cached = db.sourceCache(d.id, d.media), !exclude.contains(cached.channel) {
             onStatus("Avvio il video…")
-            if let r = await tryHit(SearchHit(channel: cached.channel, title: cached.title, type: type, item: cached.item), req) {
+            if let r = await tryHit(SearchHit(channel: cached.channel, title: cached.title, type: type, item: cached.item), req, &ignored) {
                 db.upsertVodIndex(VodIndexEntity(tmdbId: d.id, media: d.media, available: true))
                 return r
             }
@@ -49,6 +50,8 @@ final class PlaybackResolver {
         onStatus("Cerco le sorgenti…")
         let queries = [d.displayTitle, d.originalDisplayTitle].map { $0.trimmed }.filter { !$0.isBlank }.distinct
         var seenItems = Set<String>()
+        // search hits whose source had the title but gave no link (often a passing hiccup of the site)
+        var retryable = Set<String>()
         // the sources answer at their own pace (slower behind a VPN): a first quick round, then, if nothing could be
         // played, a patient one that also waits for the slow sources and tries more of what they found
         let rounds: [(String, Int, Int)] = queries.map { ($0, 20, exclude.isEmpty ? 4 : 6) } + queries.prefix(1).map { ($0, 40, 8) }
@@ -58,10 +61,11 @@ final class PlaybackResolver {
             do { resp = try await engine.search(q, type: type, year: d.year, timeoutSec: wait) }
             catch { NxLog.w("NxResolver", "search \"\(q)\" failed: \(error)"); continue }
             NxLog.i("NxResolver", "search \"\(q)\" (\(wait) s): \(resp.hits.count) results in \(resp.elapsed ?? 0)s; top=\(resp.hits.prefix(5).map { "\($0.channel):\($0.title):\($0.scoreValue)" })")
-            let hits = resp.hits.filter { $0.scoreValue >= 0.6 && !exclude.contains($0.channel) && seenItems.insert($0.item).inserted }.prefix(take)
+            // a source that had the episode but gave no link this time gets one more try in the patient round
+            let hits = resp.hits.filter { $0.scoreValue >= 0.6 && !exclude.contains($0.channel) && (seenItems.insert($0.item).inserted || (wait > 20 && retryable.remove($0.item) != nil)) }.prefix(take)
             for hit in hits {
                 onStatus("Trovato, lo preparo…")
-                if let r = await tryHit(hit, req) {
+                if let r = await tryHit(hit, req, &retryable) {
                     db.upsertSourceCache(SourceCacheEntity(tmdbId: d.id, media: d.media, channel: hit.channel, item: hit.item, title: hit.title))
                     db.upsertVodIndex(VodIndexEntity(tmdbId: d.id, media: d.media, available: true))
                     return r
@@ -73,7 +77,7 @@ final class PlaybackResolver {
         return nil
     }
 
-    private func tryHit(_ hit: SearchHit, _ req: PlayRequest) async -> ResolvedStream? {
+    private func tryHit(_ hit: SearchHit, _ req: PlayRequest, _ retryable: inout Set<String>) async -> ResolvedStream? {
         var item = hit.item
         if req.details.isTv {
             let eps: [EpisodeHit]
@@ -85,8 +89,8 @@ final class PlaybackResolver {
             item = ep.item
         }
         let r: PlayResponse
-        do { r = try await engine.play(item) } catch { NxLog.w("NxResolver", "\(hit.channel): play failed: \(error)"); return nil }
-        guard let url = r.url else { NxLog.w("NxResolver", "\(hit.channel): no playable link"); return nil }
+        do { r = try await engine.play(item) } catch { NxLog.w("NxResolver", "\(hit.channel): play failed: \(error)"); retryable.insert(hit.item); return nil }
+        guard let url = r.url else { NxLog.w("NxResolver", "\(hit.channel): no playable link"); retryable.insert(hit.item); return nil }
         NxLog.i("NxResolver", "play on \(hit.channel): server=\(r.server ?? "?") kind=\(r.kind ?? "?")")
         return ResolvedStream(url: url, headers: r.headers ?? [:], kind: r.kind ?? "progressive", server: r.server ?? "", channel: hit.channel, alternates: r.all ?? [])
     }
