@@ -48,6 +48,10 @@ struct RootView: View {
             NxColor.bg.ignoresSafeArea()
             content
                 .disabled(playerShown || !app.sheets.isEmpty)
+                #if os(tvOS)
+                // a gate (VPN, line, "Chi guarda?") has nothing behind it: BACK asks before leaving the app
+                .onExitCommand(perform: app.profile == nil || app.session == nil || !app.vpn || app.onboardingFor != nil ? { app.askExit() } : nil)
+                #endif
             if playerShown {
                 PlayerScreen()
                     .disabled(!app.sheets.isEmpty)

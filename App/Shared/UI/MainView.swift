@@ -102,6 +102,10 @@ struct MainView: View {
         }
         #if os(tvOS)
         .padding(.leading, Metrics.rail)
+        // one block for the focus engine: RIGHT from any entry of the side menu lands in the page, also where the top
+        // of the page is the billboard (nothing to focus at the height of the menu entry)
+        .focusSection()
+        // BACK (Android: the same chain): a page → the one before (the stack does it), a section → the side menu
         .onExitCommand(perform: (app.paths[s] ?? []).isEmpty ? { rail = s } : nil)
         #endif
     }
@@ -199,6 +203,8 @@ private struct SideRail: View {
         )
         .ignoresSafeArea()
         .focusSection()
+        // BACK on the side menu: ask before leaving the app (Android TV does the same)
+        .onExitCommand { app.askExit() }
         .animation(.easeOut(duration: 0.18), value: open)
     }
 }

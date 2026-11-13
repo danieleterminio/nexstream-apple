@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Our own panels instead of the system's sheets, menus and alerts: a panel that rises from the bottom on the phone,
 /// one that slides in from the right on the TV, and a dialog in the middle for questions.
@@ -65,6 +66,15 @@ extension AppModel {
         menu(title, options.map { o in NxAction(o.1, selected: o.0 == current) { onPick(o.0) } })
     }
 
+    /// "Vuoi uscire da NexStream?" — BACK on the TV's side menu or on a gate (Android: askExit in MainActivity).
+    /// "Resta" is the first choice, so a second BACK or a quick select never leaves by mistake.
+    func askExit() {
+        if sheets.contains(where: { $0.title == "nx.exit" }) { return }
+        withAnimation(.easeOut(duration: 0.22)) {
+            sheets.append(NxSheetItem(style: .dialog, title: "nx.exit", content: AnyView(ExitQuestion().environmentObject(self))))
+        }
+    }
+
     /// A question with one thing to confirm.
     func confirm(_ title: String, message: String? = nil, confirm: String, destructive: Bool = false, action: @escaping () -> Void) {
         present(nil, style: .dialog) {
@@ -78,6 +88,39 @@ extension AppModel {
                 .padding(.top, Metrics.u(6))
             }
         }
+    }
+}
+
+/// The question before leaving the app.
+private struct ExitQuestion: View {
+    @EnvironmentObject var app: AppModel
+    #if os(tvOS)
+    @FocusState private var stay: Bool
+    #endif
+    var body: some View {
+        VStack(spacing: Metrics.u(12)) {
+            Text("Vuoi uscire da NexStream?").font(NxFont.titleM).foregroundStyle(NxColor.text).multilineTextAlignment(.center)
+            VStack(spacing: Metrics.u(8)) {
+                NxButton("Resta", kind: .primary, wide: true) { app.dismissSheet() }
+                    #if os(tvOS)
+                    .focused($stay)
+                    #endif
+                NxButton("Esci", kind: .quiet, wide: true) { app.dismissSheet(); AppExit.leave() }
+            }
+            .padding(.top, Metrics.u(6))
+        }
+        #if os(tvOS)
+        .onAppear { stay = true }
+        #endif
+    }
+}
+
+/// Back to the system's home screen, the way the system's own BACK on a root screen does it.
+enum AppExit {
+    static func leave() {
+        #if os(tvOS)
+        UIControl().sendAction(#selector(URLSessionTask.suspend), to: UIApplication.shared, for: nil)
+        #endif
     }
 }
 

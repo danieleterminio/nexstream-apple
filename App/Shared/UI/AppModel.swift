@@ -119,6 +119,8 @@ final class AppModel: ObservableObject {
     @Published var pendingSearch: String? = nil
     /// Bumped when the tab already on screen is tapped again (back to the top).
     @Published var reselect = 0
+    /// Bumped when the sync service changed the profiles (the picker reloads them).
+    @Published var profilesRev = 0
 
     private var watches = [Watch]()
     private var autoTried = false
@@ -128,7 +130,7 @@ final class AppModel: ObservableObject {
         MetaRepository.logoLuminance = { ImageLoader.luminance($0) }
         _ = PlatformServices.shared
         core.sync.deviceName = { Lan.deviceName().substringAfter("· ") }
-        core.sync.onProfilesChanged = { [weak self] in DispatchQueue.main.async { self?.store.reloadAll() } }
+        core.sync.onProfilesChanged = { [weak self] in DispatchQueue.main.async { self?.store.reloadAll(); self?.profilesRev += 1 } }
         core.start()
         watches.append(onMain(Vpn.shared.active) { [weak self] v in
             guard let self = self else { return }

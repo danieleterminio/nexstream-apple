@@ -140,6 +140,22 @@ final class SyncEngine {
 
     private func file(_ aid: String) -> URL { Paths.support.appendingPathComponent("sync-\(aid.prefix(16)).json") }
 
+    /// Whether this device has already met the online data of the line in use (first contact done). Until then the
+    /// profile picker waits instead of offering to create a profile: the line may already have its profiles online.
+    /// True when there is nothing to wait for (no line, a demo build that does not sync).
+    func hasMetCurrentLine() -> Bool {
+        guard let s = session.current.value else { return true }
+        var user = s.username, pass = s.password
+        if Demo.enabled {
+            guard let t = Demo.value("-nxSync") else { return true }
+            user = t; pass = "pipeline"
+        }
+        let aid = SyncCrypto.accountId(user: user, pass: pass)
+        if loadedFor == aid { return state.started }
+        guard let data = try? Data(contentsOf: file(aid)), let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return false }
+        return (o["started"] as? Bool) ?? false
+    }
+
     private func load(_ aid: String) {
         state = State(); loadedFor = aid
         guard let data = try? Data(contentsOf: file(aid)), let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }

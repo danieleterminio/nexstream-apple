@@ -114,7 +114,7 @@ struct LoginView: View {
     var body: some View {
         GateFrame {
             #if os(tvOS)
-            if phone { PhoneLoginPanel { phone = false } } else { form }
+            if phone { PhoneLoginPanel { phone = false }.onExitCommand { phone = false } } else { form }
             #else
             form
             #endif
@@ -196,13 +196,17 @@ struct ProfilesView: View {
     @State private var profiles: [ProfileEntity] = []
     @State private var loaded = false
     @State private var editing = false
+    /// Right after signing in, the line's profiles may still be on their way from the sync service.
+    @State private var waitingSync = false
 
     private var editMode: Bool { manage || editing }
     private let columns = [GridItem(.adaptive(minimum: Metrics.u(100), maximum: Metrics.u(130)), spacing: Metrics.u(22))]
 
     var body: some View {
         GateFrame(brand: !manage) {
-            if loaded && profiles.isEmpty && !manage {
+            if loaded && profiles.isEmpty && !manage && waitingSync {
+                BrandLoader(label: "Cerco i profili di questa linea…").frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if loaded && profiles.isEmpty && !manage {
                 // first start: the editor is the page, and there is no way around it (Android: ProfileEditor firstEver)
                 ScrollView(.vertical, showsIndicators: false) {
                     ProfileEditor(profile: nil, taken: [], firstEver: true) { created in
@@ -216,6 +220,31 @@ struct ProfilesView: View {
             } else { picker }
         }
         .onAppear { reload(); if !manage { app.autoSelectProfile() } }
+        // the sync brings the line's profiles: show them as soon as they are here (no need to reopen the app)
+        .onChange(of: app.profilesRev) { _, _ in reload() }
+        .task { await waitForLineProfiles() }
+    }
+
+    /// With no profile on the device and a line this device has never synced, the profiles may exist online: wait for
+    /// the first round (up to 20 s, less if it fails) before offering to create the first profile.
+    private func waitForLineProfiles() async {
+        if manage { return }
+        let sync = app.core.sync
+        guard app.core.profiles.all().isEmpty, !sync.hasMetCurrentLine() else { return }
+        waitingSync = true
+        defer { waitingSync = false; reload() }
+        let start = Date()
+        var sawRun = false
+        while Date().timeIntervalSince(start) < 20 {
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            if Task.isCancelled { return }
+            if !app.core.profiles.all().isEmpty || sync.hasMetCurrentLine() { return }
+            let st = sync.status.value
+            if st.running { sawRun = true }
+            // a round ended with an error (or never started without the VPN): stop waiting
+            if sawRun && !st.running && st.error != nil { return }
+            if !Vpn.shared.active.value && Date().timeIntervalSince(start) > 3 { return }
+        }
     }
 
     private var picker: some View {
