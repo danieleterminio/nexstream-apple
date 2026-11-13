@@ -61,6 +61,18 @@ Apple non permette a nessuna app di mostrare video sullo schermo dell'auto. Quel
 - **App NexStream sullo schermo dell'auto** (liste di canali, film e serie, solo audio, e ricerca vocale con Siri): compare solo se l'app è firmata con un profilo che contiene i permessi `com.apple.developer.carplay-audio` e, per la voce, `com.apple.developer.siri`. Il permesso CarPlay si chiede ad Apple dall'account sviluppatore (developer.apple.com/contact/carplay, categoria "Audio"); una volta concesso si crea un profilo per `app.nexstream.one` con CarPlay e Siri attivi e si firma l'ipa con quello. Il file `docs\NexStream.entitlements` elenca i permessi da passare allo strumento di firma. Il certificato legato all'UDID di norma non li ha: in quel caso l'app funziona tutta, ma non compare in auto.
 - **Video in auto da fermi**: iOS 26 permette di mandare il video in AirPlay allo schermo dell'auto a veicolo parcheggiato, sulle auto che lo supportano. Si usa il tasto AirPlay del player.
 
+## 7. Sincronizzazione tra dispositivi
+
+I dati della linea fanno da account: profili, PIN, lista, preferiti, posizioni dei video, gusti, squadre, promemoria e impostazioni di visione sono gli stessi su ogni dispositivo che entra con quella linea (iPhone, Apple TV, Android, Android TV, Fire TV). I dati stanno in un piccolo database sul tuo account Cloudflare (`nexstream-sync`), cifrati sul dispositivo con una chiave ricavata dalla password della linea.
+
+**Attenzione al primo aggiornamento.** Il primo dispositivo che si collega con una linea rende i suoi profili quelli dell'account. Ogni altro dispositivo con la stessa linea, al primo collegamento, perde i profili locali e prende quelli online. Aggiorna quindi per primo il dispositivo con i profili che vuoi tenere.
+
+In Impostazioni, sotto "Linea", la riga "Sincronizzazione tra dispositivi" mostra l'ultima sincronizzazione e la forza con un tocco.
+
+## 8. "Riproduci su…" e telecomando
+
+Nel player del telefono il tasto con la TV elenca le TV di casa con NexStream aperto (Apple TV, Fire TV, box Android). Scegli la TV: il canale o il film riparte lì dallo stesso punto e il telefono diventa il telecomando, con "Riprendi qui" per tornare sul telefono. La prima volta la TV mostra un codice da scrivere sul telefono. Telefono e TV devono essere sulla stessa rete; se la VPN del telefono blocca la rete di casa, attiva l'accesso alla rete locale.
+
 ## Differenze rispetto ad Android
 
 - **Apple TV e dati**: tvOS può svuotare la memoria temporanea di un'app chiusa. Canali, guida e immagini si riscaricano da soli; profili, preferiti, lista e posizioni vengono ripristinati da una copia di sicurezza interna.
