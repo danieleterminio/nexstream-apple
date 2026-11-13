@@ -667,7 +667,16 @@ final class RemoteHost: ObservableObject {
             let app = AppModel.shared
             // the TV must be able to play it: nothing streams without the VPN (same answer as Android's RemoteHost)
             if !Vpn.shared.active.value { return .json(200, "{\"ok\":false,\"error\":\"Attiva la VPN sulla TV\"}") }
-            if let u = body["profile"].stringOrNil, let pid = core.sync.profileId(uuid: u), pid != core.profiles.id, let p = core.db.profile(pid), p.pin == nil { core.profiles.select(p) }
+            // the phone never moves the TV out of a kids profile, nor into a profile with a PIN (same rule as Android)
+            if let u = body["profile"].stringOrNil, let pid = core.sync.profileId(uuid: u), pid != core.profiles.id, let p = core.db.profile(pid) {
+                func refuse(_ m: String) -> Lan.Response {
+                    let d = (try? JSONSerialization.data(withJSONObject: ["ok": false, "error": m])) ?? Data()
+                    return .json(200, String(decoding: d, as: UTF8.self))
+                }
+                if core.profiles.id > 0, core.db.profile(core.profiles.id)?.kids == true { return refuse("Sulla TV è attivo un profilo bambini: cambialo dalla TV") }
+                if p.pin != nil { return refuse("Il profilo \(p.name) ha un PIN: sceglilo dalla TV") }
+                core.profiles.select(p)
+            }
             if core.profiles.id <= 0 { app.autoSelectProfile() }
             guard core.profiles.id > 0 else { return .json(200, "{\"ok\":false,\"error\":\"Scegli un profilo sulla TV\"}") }
             if body["kind"].string == "live" {
