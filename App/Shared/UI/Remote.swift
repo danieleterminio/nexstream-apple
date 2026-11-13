@@ -548,7 +548,7 @@ struct RemoteView: View {
                     .font(NxFont.meta).foregroundStyle(NxColor.textMuted)
                 VStack(alignment: .leading, spacing: Metrics.u(4)) {
                     Text("INDIRIZZO DI QUESTA APPLE TV").font(NxFont.label).tracking(1).foregroundStyle(NxColor.textDim)
-                    Text(address.map { "\($0):\(host.port)" } ?? "Nessuna rete di casa").font(NxFont.display(20, .semibold)).foregroundStyle(NxColor.text)
+                    Text(verbatim: address.map { a -> String in a + ":" + String(host.port) } ?? "Nessuna rete di casa").font(NxFont.display(20, .semibold)).foregroundStyle(NxColor.text)
                 }
                 VStack(alignment: .leading, spacing: Metrics.u(8)) {
                     Text("TELEFONI ABBINATI").font(NxFont.label).tracking(1).foregroundStyle(NxColor.textDim)
