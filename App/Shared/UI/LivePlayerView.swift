@@ -120,6 +120,7 @@ struct LivePlayerView: View {
                         Text(title).font(NxFont.ui(15, .bold)).foregroundStyle(.white).lineLimit(1).padding(.leading, 8)
                     }
                     Spacer(minLength: 0)
+                    if app.castBody() != nil { PlayerKey(icon: "tv", label: "Riproduci su…", size: 19) { app.presentCast() } }
                     if player.engine == .system { AirPlayButton().frame(width: 42, height: 42) }
                     if player.pipPossible { PlayerKey(icon: "pip.enter", label: "Finestra", size: 19) { player.togglePip() } }
                 }
@@ -278,6 +279,7 @@ struct LivePlayerView: View {
                             let fav = store.favorites.contains(c.streamId)
                             HStack(alignment: .top, spacing: 4) {
                                 NxIconAction(icon: fav ? "star.fill" : "star", label: "Preferito", active: fav) { app.toggleFavorite(c) }
+                                NxIconAction(icon: "tv", label: "Sulla TV") { app.presentCast() }
                                 NxIconAction(icon: "info.circle", label: "Programma") { details() }
                                 NxIconAction(icon: "captions.bubble", label: "Audio") { app.presentTracks(model.player) }
                                 if model.variants().count > 1 { NxIconAction(icon: "sparkles.tv", label: "Qualità") { quality() } }

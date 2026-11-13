@@ -38,6 +38,8 @@ extension LiveStore {
 
 /// "Diretta": every channel of the line with what it is showing. A list on the phone, tiles on the TV.
 struct LiveView: View {
+    /// Inside the phone's "Diretta" page, which has its own bar.
+    var embedded = false
     @EnvironmentObject var app: AppModel
     @EnvironmentObject var store: LiveStore
     @State private var genre: String = "all"
@@ -69,8 +71,16 @@ struct LiveView: View {
                             }
                             .padding(.horizontal, Metrics.gutter).padding(.top, 10)
                             #else
-                            ForEach(list) { c in
-                                ChannelLine(showing: store.showing(c), favorite: store.favorites.contains(c.streamId)) { app.play(c, ids: list.map { $0.streamId }) }
+                            if Metrics.isPad {
+                                LazyVGrid(columns: [GridItem(.flexible(), spacing: 0), GridItem(.flexible(), spacing: 0)], spacing: 0) {
+                                    ForEach(list) { c in
+                                        ChannelLine(showing: store.showing(c), favorite: store.favorites.contains(c.streamId)) { app.play(c, ids: list.map { $0.streamId }) }
+                                    }
+                                }
+                            } else {
+                                ForEach(list) { c in
+                                    ChannelLine(showing: store.showing(c), favorite: store.favorites.contains(c.streamId)) { app.play(c, ids: list.map { $0.streamId }) }
+                                }
                             }
                             #endif
                             Color.clear.frame(height: Metrics.u(20))
@@ -80,13 +90,46 @@ struct LiveView: View {
                 }
             }
         }
-        #if os(iOS)
-        .nxScreen("Diretta", back: false, large: true) { BarIcon(icon: "magnifyingglass", label: "Cerca") { app.open(.search) } }
-        #else
-        .nxScreen("Diretta", back: false)
-        #endif
+        .if(!embedded) { $0.nxScreen("Diretta", back: false) }
     }
 }
+
+#if os(iOS)
+/// The phone's "Diretta": the channels and the TV guide, one tap apart.
+struct LiveHub: View {
+    @EnvironmentObject var app: AppModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            NxTopBar(title: "Diretta", back: false, large: true) {
+                BarIcon(icon: "magnifyingglass", label: "Cerca") { app.open(.search) }
+            }
+            HStack(spacing: 24) {
+                tab("Canali", 0)
+                tab("Guida TV", 1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, Metrics.gutter)
+            .overlay(alignment: .bottom) { Rectangle().fill(NxColor.ink4).frame(height: 1) }
+            if app.liveTab == 1 { GuideView(embedded: true) } else { LiveView(embedded: true) }
+        }
+        .nxPage()
+    }
+
+    private func tab(_ title: String, _ i: Int) -> some View {
+        let on = app.liveTab == i
+        return Button { app.liveTab = i } label: {
+            VStack(spacing: 7) {
+                Text(title).font(NxFont.ui(16, .heavy)).foregroundStyle(on ? Color.white : NxColor.textDim)
+                Rectangle().fill(on ? NxColor.accent : Color.clear).frame(height: 3)
+            }
+            .fixedSize()
+            .padding(.top, 4)
+        }
+        .buttonStyle(NxPlainStyle(scale: 1))
+    }
+}
+#endif
 
 /// One channel in a list: the picture of what is on, the programme, how far it is, what comes after.
 struct ChannelLine: View {
@@ -139,6 +182,7 @@ struct ChannelLine: View {
 /// "Guida TV": a time grid. Channels down the side, the hours across the top, every programme as wide as it is long.
 /// The window (two hours on the phone, three on the TV) moves with the arrows, a swipe, or the day and time pills.
 struct GuideView: View {
+    var embedded = false
     @EnvironmentObject var app: AppModel
     @EnvironmentObject var store: LiveStore
     @State private var genre = "all"
@@ -151,8 +195,8 @@ struct GuideView: View {
     private let span: Millis = 3 * Clock.hour
     private let headW: CGFloat = 250, rowH: CGFloat = 104, gap: CGFloat = 6
     #else
-    private let span: Millis = 2 * Clock.hour
-    private let headW: CGFloat = 62, rowH: CGFloat = 60, gap: CGFloat = 3
+    private let span: Millis = (Metrics.isPad ? 4 : 2) * Clock.hour
+    private let headW: CGFloat = Metrics.isPad ? 96 : 62, rowH: CGFloat = Metrics.isPad ? 68 : 60, gap: CGFloat = 3
     #endif
 
     static func floor30(_ t: Millis) -> Millis { t - t % (30 * Clock.minute) }
@@ -194,11 +238,8 @@ struct GuideView: View {
                 .padding(.horizontal, Metrics.tv ? Metrics.gutter : 0)
             }
         }
-        #if os(iOS)
-        .nxScreen("Guida TV", back: false, large: true) { BarIcon(icon: "magnifyingglass", label: "Cerca") { app.open(.search) } }
-        #else
-        .nxScreen("Guida TV", back: false)
-        #endif
+        .if(!embedded) { $0.nxScreen("Guida TV", back: false) }
+        .padding(.top, embedded ? 6 : 0)
         .task(id: "\(genre)-\(start)-\(store.channels.count)-\(store.version / 20)") { await load() }
         .task {
             while !Task.isCancelled {

@@ -41,6 +41,36 @@ final class RemoteClient {
     @discardableResult func volume(_ tv: Tv, _ dir: String) async -> Lan.Reply { await call(tv.address, "/vol", token: tv.token, body: ["d": dir]) }
     @discardableResult func search(_ tv: Tv, _ q: String) async -> Lan.Reply { await call(tv.address, "/search", token: tv.token, body: ["q": q]) }
     @discardableResult func tune(_ tv: Tv, id: String) async -> Lan.Reply { await call(tv.address, "/tune", token: tv.token, body: ["id": id]) }
+    /// What a TV is playing (remote protocol 2).
+    struct TvState: Equatable {
+        var playing = false
+        var kind = ""
+        var title = ""
+        var sub = ""
+        var art: String? = nil
+        var pos: Millis = 0
+        var dur: Millis = 0
+        var paused = false
+        var id = ""
+        var media = ""
+        var tmdb = 0
+        var season = 0
+        var episode = 0
+    }
+    /// "Riproduci su…": starts a channel or a title on the TV.
+    func play(_ tv: Tv, _ body: [String: Any]) async -> Lan.Reply { await call(tv.address, "/play", token: tv.token, body: body) }
+    func state(_ tv: Tv) async -> TvState? {
+        let r = await call(tv.address, "/state", token: tv.token, body: [:])
+        if r.status != 200 { return nil }
+        let j = r.json
+        return TvState(playing: j["playing"].bool, kind: j["kind"].string, title: j["title"].string, sub: j["sub"].string, art: j["art"].stringOrNil?.nilIfBlank,
+                       pos: j["pos"].int64OrNil ?? 0, dur: j["dur"].int64OrNil ?? 0, paused: j["paused"].bool, id: j["id"].string, media: j["media"].string,
+                       tmdb: j["tmdb"].int, season: j["season"].int, episode: j["episode"].int)
+    }
+    @discardableResult func seek(_ tv: Tv, to pos: Millis) async -> Lan.Reply { await call(tv.address, "/seek", token: tv.token, body: ["pos": pos]) }
+    @discardableResult func seek(_ tv: Tv, by delta: Millis) async -> Lan.Reply { await call(tv.address, "/seek", token: tv.token, body: ["by": delta]) }
+    @discardableResult func stop(_ tv: Tv) async -> Lan.Reply { await call(tv.address, "/stop", token: tv.token, body: [:]) }
+
     func channels(_ tv: Tv) async -> [Channel]? {
         let r = await call(tv.address, "/channels", token: tv.token, body: [:])
         if r.status != 200 { return nil }
@@ -113,6 +143,9 @@ struct RemoteView: View {
     @State private var channels: [RemoteClient.Channel] = []
     @State private var query = ""
     @State private var retried = false
+    @State private var version = 1
+    @State private var now = RemoteClient.TvState()
+    @State private var scrub: Millis? = nil
 
     var body: some View {
         Group {
@@ -122,9 +155,28 @@ struct RemoteView: View {
         .onAppear {
             saved = client.saved()
             finder.start(type: RemoteClient.service, onProblem: { p in if let p = p { message = p } }) { found = $0 }
-            if tv == nil, let last = saved.first { connect(last.address, name: last.name, token: last.token) }
+            if tv == nil {
+                if let target = app.remoteTarget {
+                    app.remoteTarget = nil
+                    connect(target.address, name: target.name, token: saved.first { $0.address == target.address }?.token)
+                } else if let last = saved.first { connect(last.address, name: last.name, token: last.token) }
+            }
         }
         .onDisappear { finder.stop() }
+        .task(id: tv?.address ?? "") {
+            // what the TV is playing, while this screen is open
+            guard let t = tv, version >= 2 else { return }
+            if let body = app.pendingCast {
+                app.pendingCast = nil
+                let r = await client.play(t, body)
+                if r.status == 200 && r.json["ok"].bool { app.say("In riproduzione su \(t.name)") }
+                else { app.say(r.json["error"].stringOrNil ?? "La TV non ha avviato la riproduzione.") }
+            }
+            while !Task.isCancelled {
+                if scrub == nil, let st = await client.state(t) { now = st }
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+            }
+        }
     }
 
     private func connect(_ address: String, name: String, token: String?) {
@@ -146,6 +198,7 @@ struct RemoteView: View {
             retried = false
             let tvName = r.json["name"].stringOrNil?.substringAfter("· ") ?? name
             volume = r.json["volume"].bool
+            version = r.json["v"].intOrNil ?? 1
             if r.json["paired"].bool, let tok = token {
                 let t = RemoteClient.Tv(name: tvName, address: address, token: tok)
                 client.remember(t); saved = client.saved(); tv = t
@@ -227,52 +280,122 @@ struct RemoteView: View {
         Task { let r = await client.key(t, k); if r.status == 401 { tv = nil; message = "La TV chiede di abbinare di nuovo il telefono." } }
     }
 
+    /// What the TV is playing: artwork, title, the bar that moves it, pause and the ten-second jumps.
+    @ViewBuilder private func nowPlaying(_ t: RemoteClient.Tv) -> some View {
+        if version >= 2 && now.playing {
+            VStack(spacing: 8) {
+                HStack(spacing: 12) {
+                    NxImage(url: now.art, maxPixel: 400) { ZStack { NxColor.ink3; Image(systemName: now.kind == "live" ? "play.tv" : "film").foregroundStyle(NxColor.textDim) } }
+                        .frame(width: 96, height: 54).clipShape(RoundedRectangle(cornerRadius: Metrics.radius, style: .continuous))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(now.title).font(NxFont.ui(15, .bold)).foregroundStyle(.white).lineLimit(1)
+                        Text(now.sub).font(NxFont.caption).foregroundStyle(NxColor.textMuted).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    NxButton("Riprendi qui", icon: "iphone") { resumeHere(t) }
+                }
+                if now.kind == "vod" && now.dur > 0 {
+                    HStack(spacing: 8) {
+                        Text(playerClock(scrub ?? now.pos)).font(NxFont.ui(11, .bold)).foregroundStyle(.white).monospacedDigit()
+                        Scrubber(position: scrub ?? now.pos, duration: now.dur, onScrub: { scrub = $0 }, onEnd: {
+                            if let target = scrub { now.pos = target; Task { await client.seek(t, to: target); scrub = nil } }
+                        })
+                        Text("-" + playerClock(now.dur - (scrub ?? now.pos))).font(NxFont.ui(11, .bold)).foregroundStyle(NxColor.textMuted).monospacedDigit()
+                    }
+                } else if now.dur > 0 {
+                    NxProgressBar(value: Double(now.pos) / Double(now.dur))
+                }
+            }
+            .padding(12)
+            .background(NxColor.ink2, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+    }
+
+    /// Stops the TV and carries on here, from where the TV was.
+    private func resumeHere(_ t: RemoteClient.Tv) {
+        let st = now
+        Task {
+            await client.stop(t)
+            if st.kind == "live", let c = app.core.channels.get(st.id) { app.play(c) }
+            else if st.kind == "vod", let d = try? await app.core.catalog.details(st.media, st.tmdb) {
+                app.play(PlayRequest(details: d, season: st.season, episode: st.episode, startMs: st.pos))
+            }
+        }
+    }
+
     /// Everything on one screen, without scrolling, on every phone: sizes follow the room there is.
     private func pad(_ t: RemoteClient.Tv) -> some View {
         GeometryReader { g in
-            let u = min(g.size.width / 5.4, (g.size.height - 150) / 6.4)
-            VStack(spacing: u * 0.26) {
+            let top: CGFloat = (version >= 2 && now.playing) ? 250 : 150
+            let u = min(g.size.width / 5.4, (g.size.height - top) / 6.0)
+            VStack(spacing: u * 0.22) {
+                nowPlaying(t)
                 HStack(spacing: 8) {
                     NxField(icon: "magnifyingglass") {
                         TextField("", text: $query, prompt: Text("Cerca sulla TV").foregroundColor(NxColor.textDim)).submitLabel(.search).autocorrectionDisabled()
                             .onSubmit { let q = query.trimmed; if !q.isEmpty { Task { await client.search(t, q) }; query = "" } }
                     }
-                    BarIcon(icon: "list.bullet", label: "Canali") { showChannelList(t) }
+                    NxButton("Canali", icon: "list.bullet") { showChannelList(t) }
                 }
                 Spacer(minLength: 0)
-                HStack(spacing: u * 0.9) {
-                    key(t, "arrow.uturn.backward", "back", size: u * 0.86)
-                    round("house.fill", "Home", u * 0.86) { Task { await client.home(t) } }
-                    key(t, "line.3.horizontal", "menu", size: u * 0.86)
-                }
                 VStack(spacing: u * 0.12) {
                     key(t, "chevron.up", "up", size: u)
                     HStack(spacing: u * 0.12) {
                         key(t, "chevron.left", "left", size: u)
-                        Button { send(t, "ok") } label: { Text("OK").font(Font.custom("Sora-Regular_Bold", fixedSize: u * 0.34)).foregroundStyle(NxColor.ink0).frame(width: u * 1.2, height: u * 1.2) }
-                            .background(Color.white, in: Circle()).buttonStyle(NxPlainStyle(scale: 0.92))
+                        Button { send(t, "ok") } label: {
+                            Text("OK").font(Font.custom("Sora-Regular_Bold", fixedSize: u * 0.34)).foregroundStyle(Color.black).frame(width: u * 1.2, height: u * 1.2).background(Color.white, in: Circle())
+                        }
+                        .buttonStyle(NxPlainStyle(scale: 0.92))
                         key(t, "chevron.right", "right", size: u)
                     }
                     key(t, "chevron.down", "down", size: u)
                 }
+                HStack(spacing: u * 0.7) {
+                    labelled("Indietro") { key(t, "arrow.uturn.backward", "back", size: u * 0.82) }
+                    labelled("Home") { round("house.fill", "Home", u * 0.82) { Task { await client.home(t) } } }
+                    labelled("Menu") { key(t, "line.3.horizontal", "menu", size: u * 0.82) }
+                }
                 HStack(spacing: u * 0.5) {
-                    VStack(spacing: u * 0.12) {
-                        if volume {
-                            round("speaker.plus.fill", "Volume su", u * 0.8) { Task { await client.volume(t, "up") } }
-                            round("speaker.minus.fill", "Volume giù", u * 0.8) { Task { await client.volume(t, "down") } }
-                        }
+                    if volume {
+                        pill(u, "speaker.minus.fill", "speaker.plus.fill", "Volume", { Task { await client.volume(t, "down") } }, { Task { await client.volume(t, "up") } })
                     }
-                    key(t, "playpause.fill", "playpause", size: u * 0.95)
-                    VStack(spacing: u * 0.12) {
-                        key(t, "plus", "chup", size: u * 0.8)
-                        key(t, "minus", "chdown", size: u * 0.8)
+                    if version >= 2 && now.playing && now.kind == "vod" {
+                        round("gobackward.10", "Indietro 10 secondi", u * 0.82) { Task { await client.seek(t, by: -10_000) } }
                     }
+                    key(t, now.playing && now.paused ? "play.fill" : "playpause.fill", "playpause", size: u * 0.95)
+                    if version >= 2 && now.playing && now.kind == "vod" {
+                        round("goforward.10", "Avanti 10 secondi", u * 0.82) { Task { await client.seek(t, by: 10_000) } }
+                    }
+                    pill(u, "minus", "plus", "Canale", { send(t, "chdown") }, { send(t, "chup") })
                 }
                 Spacer(minLength: 0)
                 NxButton("Cambia TV", kind: .quiet) { tv = nil }
             }
-            .padding(.horizontal, 18).padding(.vertical, 10)
+            .padding(.horizontal, 16).padding(.vertical, 8)
             .frame(width: g.size.width, height: g.size.height)
+        }
+    }
+
+    private func labelled<C: View>(_ text: String, @ViewBuilder _ content: () -> C) -> some View {
+        VStack(spacing: 4) { content(); Text(text).font(NxFont.ui(10, .semibold)).foregroundStyle(NxColor.textDim) }
+    }
+
+    /// Two keys in one capsule with their name under it (volume, channel).
+    private func pill(_ u: CGFloat, _ minus: String, _ plus: String, _ label: String, _ down: @escaping () -> Void, _ up: @escaping () -> Void) -> some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 0) {
+                Button(action: { UIImpactFeedbackGenerator(style: .light).impactOccurred(); down() }) {
+                    Image(systemName: minus).font(.system(size: u * 0.26, weight: .bold)).foregroundStyle(.white).frame(width: u * 0.74, height: u * 0.72).contentShape(Rectangle())
+                }
+                .buttonStyle(NxPlainStyle(scale: 0.9))
+                Rectangle().fill(NxColor.ink5).frame(width: 1, height: u * 0.36)
+                Button(action: { UIImpactFeedbackGenerator(style: .light).impactOccurred(); up() }) {
+                    Image(systemName: plus).font(.system(size: u * 0.26, weight: .bold)).foregroundStyle(.white).frame(width: u * 0.74, height: u * 0.72).contentShape(Rectangle())
+                }
+                .buttonStyle(NxPlainStyle(scale: 0.9))
+            }
+            .background(NxColor.ink3, in: Capsule())
+            Text(label).font(NxFont.ui(10, .semibold)).foregroundStyle(NxColor.textDim)
         }
     }
 
@@ -350,7 +473,7 @@ final class RemoteHost: ObservableObject {
         let authed = r.headers["x-token"].map { tokens()[$0] != nil } ?? false
         let core = NexCore.shared
         switch r.path {
-        case "/hello": return .json(200, jsonString(["app": "nexstream", "name": Lan.deviceName(), "paired": authed, "volume": false] as [String: Any]))
+        case "/hello": return .json(200, jsonString(["app": "nexstream", "name": Lan.deviceName(), "paired": authed, "volume": false, "v": 2, "platform": "tvos"] as [String: Any]))
         case "/pair/start":
             let now = Clock.now
             if pairing == nil || pairing!.until < now {
@@ -388,6 +511,49 @@ final class RemoteHost: ObservableObject {
             else if let n = body["num"].intOrNil { c = core.channels.visible().first { $0.num == n } }
             guard let ch = c, core.profiles.id > 0 else { return .json(200, "{\"ok\":false}") }
             core.pendingOpen.value = (ch.streamId, core.profiles.id)
+            return .json(200, "{\"ok\":true}")
+        case "/play":
+            let app = AppModel.shared
+            if let u = body["profile"].stringOrNil, let pid = core.sync.profileId(uuid: u), pid != core.profiles.id, let p = core.db.profile(pid), p.pin == nil { core.profiles.select(p) }
+            if core.profiles.id <= 0 { app.autoSelectProfile() }
+            guard core.profiles.id > 0 else { return .json(200, "{\"ok\":false,\"error\":\"Scegli un profilo sulla TV\"}") }
+            if body["kind"].string == "live" {
+                guard let ch = body["id"].stringOrNil.flatMap({ core.channels.get($0) }) else { return .json(200, "{\"ok\":false,\"error\":\"Canale non trovato sulla TV\"}") }
+                core.pendingOpen.value = (ch.streamId, core.profiles.id)
+                return .json(200, "{\"ok\":true}")
+            }
+            let media = body["media"].string, tmdb = body["tmdb"].int
+            guard media == "movie" || media == "tv", tmdb > 0 else { return .json(200, "{\"ok\":false}") }
+            let season = body["season"].int, episode = body["episode"].int, pos = body["pos"].int64OrNil ?? 0
+            Task { @MainActor in
+                guard let d = try? await core.catalog.details(media, tmdb) else { app.say("Non riesco a caricare il titolo inviato dal telefono."); return }
+                app.play(PlayRequest(details: d, season: season, episode: episode, startMs: pos))
+            }
+            return .json(200, "{\"ok\":true}")
+        case "/state":
+            let app = AppModel.shared
+            if let m = app.live, let c = m.channel {
+                let s = m.showing
+                var o: [String: Any] = ["ok": true, "playing": true, "kind": "live", "id": c.streamId, "title": (m.now != nil || c.event != nil) ? (s?.cardTitle ?? c.name) : c.name, "sub": c.name, "paused": m.paused]
+                if let a = Img.card(s?.image) ?? c.icon { o["art"] = a }
+                if let st = s?.start, let en = s?.stop, en > st { o["pos"] = max(0, Clock.now - st); o["dur"] = en - st }
+                return .json(200, jsonString(o))
+            }
+            if let m = app.vod {
+                let d = m.details
+                var o: [String: Any] = ["ok": true, "playing": true, "kind": "vod", "title": d.displayTitle, "sub": m.subtitle, "pos": m.position, "dur": m.duration, "paused": m.paused,
+                                        "media": d.media, "tmdb": d.id, "season": m.request.season, "episode": m.request.episode]
+                if let a = Img.tmdb(d.bestBackdrop ?? d.backdropPath ?? d.posterPath, "w780") { o["art"] = a }
+                return .json(200, jsonString(o))
+            }
+            return .json(200, "{\"ok\":true,\"playing\":false}")
+        case "/seek":
+            guard let m = AppModel.shared.vod else { return .json(200, "{\"ok\":false}") }
+            if let p = body["pos"].int64OrNil { m.seekTarget = max(0, p); m.applySeek() }
+            else if let by = body["by"].int64OrNil { m.seekBy(by); m.applySeek() }
+            return .json(200, "{\"ok\":true}")
+        case "/stop":
+            AppModel.shared.closePlayer()
             return .json(200, "{\"ok\":true}")
         case "/channels":
             if core.profiles.id <= 0 { return .json(200, "[]") }

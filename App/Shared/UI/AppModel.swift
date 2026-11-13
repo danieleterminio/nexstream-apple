@@ -33,6 +33,8 @@ enum AppSection: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .home: return "house"
         case .live: return "play.tv"
+        case .movies: return "film"
+        case .series: return "tv"
         default: return icon
         }
     }
@@ -107,6 +109,8 @@ final class AppModel: ObservableObject {
     /// The downloads page opened from the VPN gate (what is downloaded plays without VPN and without network).
     @Published var offlineDownloads = false
     @Published var toast: String? = nil
+    /// Phone: which half of "Diretta" is in view (0 = channels, 1 = guide). Remembered.
+    @Published var liveTab: Int = UserDefaults.standard.integer(forKey: "nx.liveTab") { didSet { UserDefaults.standard.set(liveTab, forKey: "nx.liveTab") } }
     /// Our own panels (menus, pickers, dialogs, editors), the last one on top.
     @Published var sheets: [NxSheetItem] = []
     @Published var pendingSearch: String? = nil
@@ -120,6 +124,8 @@ final class AppModel: ObservableObject {
         store = LiveStore(core: NexCore.shared)
         MetaRepository.logoLuminance = { ImageLoader.luminance($0) }
         _ = PlatformServices.shared
+        core.sync.deviceName = { Lan.deviceName().substringAfter("· ") }
+        core.sync.onProfilesChanged = { [weak self] in DispatchQueue.main.async { self?.store.reloadAll() } }
         core.start()
         watches.append(onMain(Vpn.shared.active) { [weak self] v in
             guard let self = self else { return }
@@ -230,8 +236,34 @@ final class AppModel: ObservableObject {
             playerFull = false
             NowPlaying.shared.clear()
             PlatformServices.shared.playerClosed()
+            core.sync.kick(after: 0.5)
         }
     }
+    /// "Riproduci su…": what to start on the TV once the remote screen is connected to it, and which TV.
+    var pendingCast: [String: Any]? = nil
+    var remoteTarget: (address: String, name: String)? = nil
+
+    /// Describes what is playing here, for another NexStream to carry on with (remote protocol, `/play`).
+    func castBody() -> [String: Any]? {
+        if let l = live { return ["kind": "live", "id": l.currentId] }
+        if let v = vod, !v.isOffline {
+            return ["kind": "vod", "media": v.details.media, "tmdb": v.details.id, "season": v.request.season, "episode": v.request.episode,
+                    "pos": v.position, "profile": core.sync.profileUuid(pid)]
+        }
+        return nil
+    }
+
+    /// Hands what is playing to a TV and turns this phone into its remote.
+    func cast(to address: String, name: String) {
+        guard let body = castBody() else { return }
+        pendingCast = body
+        remoteTarget = (address, name)
+        closePlayer()
+        dismissAllSheets()
+        section = .mine
+        paths[.mine] = [.remote]
+    }
+
     /// Started from the car screen: the phone keeps showing what it was showing.
     @Published var playerHidden = false
     /// Back to the first page of Home (the phone remote's Home key).

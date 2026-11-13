@@ -177,8 +177,6 @@ struct VodHomeView: View {
                 NxChip(title: "Generi", trailing: "chevron.down", selected: false) {
                     app.menu(media == "tv" ? "Generi delle serie TV" : "Generi dei film", model.genres.map { g in NxAction(g.1) { app.open(.genre(media, g.0, g.1)) } })
                 }
-                if media == "movie" { NxChip(title: "Serie TV", selected: false) { if pushed { app.pop() }; app.open(.vod("tv")) } }
-                else { NxChip(title: "Film", selected: false) { if pushed { app.pop() }; app.open(.vod("movie")) } }
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, Metrics.gutter).padding(.vertical, 4)
@@ -479,7 +477,7 @@ struct TitleDetailView: View {
                     seasonPill(d).padding(.horizontal, Metrics.gutter)
                     LazyVStack(spacing: 16) { ForEach(model.episodes) { e in episodeRow(d, e) } }.padding(.horizontal, Metrics.gutter)
                 case 1:
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: Metrics.posterColumns), spacing: 8) {
                         ForEach(model.similar.prefix(18)) { s in
                             GeometryReader { g in PosterCard(title: s, inList: store.listKeys.contains(s.key), width: g.size.width) { app.openTitle(s) } }
                                 .aspectRatio(2 / 3, contentMode: .fit)

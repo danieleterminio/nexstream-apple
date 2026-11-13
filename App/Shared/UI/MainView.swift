@@ -16,11 +16,11 @@ struct MainView: View {
     @State private var railPulse = 0
     static let tabs: [AppSection] = [.search, .home, .live, .guide, .movies, .series, .mine, .settings]
     #else
-    static let tabs: [AppSection] = [.home, .live, .guide, .mine]
+    static let tabs: [AppSection] = [.home, .movies, .series, .live, .mine]
     #endif
 
     var body: some View {
-        ZStack(alignment: .leading) {
+        ZStack(alignment: Metrics.tv ? .leading : .bottom) {
             ForEach(MainView.tabs.filter { visited.contains($0) || $0 == app.section }) { s in
                 stack(s)
                     .opacity(s == app.section ? 1 : 0)
@@ -30,6 +30,8 @@ struct MainView: View {
             }
             #if os(tvOS)
             SideRail(profile: profile, focus: $rail).disabled(!railReady)
+            #else
+            TabBar()
             #endif
         }
         #if os(tvOS)
@@ -42,7 +44,6 @@ struct MainView: View {
         }
         #endif
         #if os(iOS)
-        .safeAreaInset(edge: .bottom, spacing: 0) { TabBar() }
         .ignoresSafeArea(.keyboard, edges: .bottom)
         #endif
         .nxPage()
@@ -55,8 +56,7 @@ struct MainView: View {
         #if os(iOS)
         switch app.section {
         case .search: app.section = .home; app.open(.search)
-        case .movies: app.section = .home; app.open(.vod("movie"))
-        case .series: app.section = .home; app.open(.vod("tv"))
+        case .guide: app.liveTab = 1; app.section = .live
         case .settings: app.section = .mine; app.open(.settings)
         default: break
         }
@@ -74,7 +74,12 @@ struct MainView: View {
     @ViewBuilder private func root(_ s: AppSection) -> some View {
         switch s {
         case .home: HomeView(pid: profile.id, kids: profile.kids)
-        case .live: LiveView()
+        case .live:
+            #if os(iOS)
+            LiveHub()
+            #else
+            LiveView()
+            #endif
         case .guide: GuideView()
         case .movies: VodHomeView(media: "movie", pid: profile.id, kids: profile.kids)
         case .series: VodHomeView(media: "tv", pid: profile.id, kids: profile.kids)
@@ -87,6 +92,9 @@ struct MainView: View {
     private func stack(_ s: AppSection) -> some View {
         NavigationStack(path: app.path(s)) {
             root(s)
+                #if os(iOS)
+                .safeAreaPadding(.bottom, Metrics.tabBar)
+                #endif
                 .navigationDestination(for: Route.self) { RouteView(route: $0) }
                 #if os(iOS)
                 .toolbar(.hidden, for: .navigationBar)
@@ -219,6 +227,7 @@ struct RouteView: View {
             }
         }
         #if os(iOS)
+        .safeAreaPadding(.bottom, Metrics.tabBar)
         .toolbar(.hidden, for: .navigationBar)
         #endif
     }

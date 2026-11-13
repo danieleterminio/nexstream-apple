@@ -85,7 +85,7 @@ struct SearchView: View {
                         #if os(iOS)
                         VStack(alignment: .leading, spacing: 8) {
                             SectionHeader(title: "Film e serie")
-                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: Metrics.posterColumns), spacing: 8) {
                                 ForEach(titles) { t in
                                     GeometryReader { g in PosterCard(title: t, inList: store.listKeys.contains(t.key), width: g.size.width) { app.openTitle(t) } }.aspectRatio(2 / 3, contentMode: .fit)
                                 }
@@ -239,6 +239,7 @@ struct SettingsView: View {
     @State private var updater: String? = nil
     @State private var engineVersion = ""
     @State private var compat = NxPlayer.forceVlc
+    @State private var synced: Millis = 0
     @State private var watches = [Watch]()
 
     var body: some View {
@@ -299,6 +300,10 @@ struct SettingsView: View {
                 if let s = app.session {
                     SettingRow(icon: "antenna.radiowaves.left.and.right", title: "Linea \(s.username)", sub: expiry(s), chevron: false) {}
                 }
+                SettingRow(icon: "arrow.triangle.2.circlepath", title: "Sincronizzazione tra dispositivi",
+                           sub: synced > 0 ? "Profili, lista, preferiti e posizioni sono gli stessi su ogni dispositivo con questa linea. Ultima: \(TimeText.time(synced))." : "Profili, lista, preferiti e posizioni sono gli stessi su ogni dispositivo con questa linea.", chevron: false) {
+                    core.sync.kick(after: 0); app.say("Sincronizzo…")
+                }
                 SettingRow(icon: "arrow.clockwise", title: app.syncStatus != nil ? "Aggiornamento in corso…" : "Aggiorna canali e guida TV",
                            sub: app.syncStatus ?? (core.epg.lastReport() ?? "Si aggiornano da soli; usalo se manca un canale o un programma."), chevron: false) {
                     if app.syncStatus == nil { core.syncIfNeeded(force: true) }
@@ -320,7 +325,7 @@ struct SettingsView: View {
                 Text("NexStream \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")").font(NxFont.caption).foregroundStyle(NxColor.textDim).padding(.vertical, Metrics.u(16))
             }
             .padding(.horizontal, Metrics.gutter)
-            .frame(maxWidth: Metrics.tv ? 1200 : .infinity)
+            .frame(maxWidth: Metrics.tv ? 1200 : (Metrics.isPad ? 720 : .infinity))
             .frame(maxWidth: .infinity)
         }
         .id(rev)
@@ -331,7 +336,7 @@ struct SettingsView: View {
         #endif
         .onAppear {
             teams = core.teams.followed()
-            watches = [onMain(core.prefs.values) { prefs = $0 }, onMain(core.settings.rev) { rev = $0 }, onMain(core.teams.changed) { _ in teams = core.teams.followed() }]
+            watches = [onMain(core.sync.lastSync) { synced = $0 }, onMain(core.prefs.values) { prefs = $0 }, onMain(core.settings.rev) { rev = $0 }, onMain(core.teams.changed) { _ in teams = core.teams.followed() }]
             Task { engineVersion = await core.engine.version() }
         }
         .onDisappear { watches = [] }

@@ -201,6 +201,7 @@ struct VodPlayerView: View {
                         }
                     }
                     Spacer(minLength: 0)
+                    if app.castBody() != nil { PlayerKey(icon: "tv", label: "Riproduci su…", size: 19) { app.presentCast() } }
                     if player.engine == .system { AirPlayButton().frame(width: 42, height: 42) }
                     if player.pipPossible { PlayerKey(icon: "pip.enter", label: "Finestra", size: 19) { player.togglePip() } }
                 }
@@ -352,6 +353,7 @@ struct VodPlayerView: View {
                     Text(d.displayTitle).font(NxFont.display(20, .bold)).foregroundStyle(.white).lineLimit(2)
                     if !model.subtitle.isEmpty { Text(model.subtitle).font(NxFont.ui(14, .bold)).foregroundStyle(NxColor.textMuted).lineLimit(2) }
                     HStack(alignment: .top, spacing: 4) {
+                        if !model.isOffline { NxIconAction(icon: "tv", label: "Sulla TV") { app.presentCast() } }
                         NxIconAction(icon: "captions.bubble", label: "Audio") { app.presentTracks(model.player) }
                         NxIconAction(icon: "speedometer", label: model.speed == 1 ? "Velocità" : String(format: "%.2g×", model.speed)) { speed() }
                         if let s = model.stream, s.channel != "offline" { NxIconAction(icon: "arrow.triangle.2.circlepath", label: "Fonte") { source() } }

@@ -86,15 +86,19 @@ enum Metrics {
     static let tv = false
     static let type: CGFloat = 1.0
     static let unit: CGFloat = 1.0
-    static let gutter: CGFloat = 14
-    static let showCardW: CGFloat = 236
-    static let channelCardW: CGFloat = 168
-    static let posterW: CGFloat = 112
-    static let rowGap: CGFloat = 24
-    static let cardGap: CGFloat = 8
-    static let radius: CGFloat = 6
+    // an iPad shows the same pages with more room: wider margins, bigger cards, more columns
+    static let pad = UIDevice.current.userInterfaceIdiom == .pad
+    static let gutter: CGFloat = pad ? 28 : 14
+    static let showCardW: CGFloat = pad ? 310 : 236
+    static let channelCardW: CGFloat = pad ? 226 : 168
+    static let posterW: CGFloat = pad ? 156 : 112
+    static let rowGap: CGFloat = pad ? 32 : 24
+    static let cardGap: CGFloat = pad ? 12 : 8
+    static let radius: CGFloat = pad ? 8 : 6
     static let rail: CGFloat = 0
     #endif
+    /// Columns of a poster grid (search results, similar titles).
+    static var posterColumns: Int { isPad ? 6 : 3 }
     static func u(_ v: CGFloat) -> CGFloat { v * unit }
     static var isPad: Bool { UIDevice.current.userInterfaceIdiom == .pad }
     /// Height of the phone's bottom bar (without the home indicator).

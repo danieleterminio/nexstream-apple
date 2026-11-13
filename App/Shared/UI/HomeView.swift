@@ -52,7 +52,9 @@ struct HeroView: View {
     private var art: String? {
         switch item {
         case .live(let s): return Img.hero(s.image)
-        case .vod(let t, let d): return Img.tmdb(t.posterPath ?? d?.posterPath, "w780") ?? Img.tmdb(d?.bestBackdrop ?? t.backdropPath, "w1280")
+        case .vod(let t, let d):
+            if Metrics.isPad { return Img.tmdb(d?.bestBackdrop ?? t.backdropPath, "w1280") ?? Img.tmdb(t.posterPath, "w780") }
+            return Img.tmdb(t.posterPath ?? d?.posterPath, "w780") ?? Img.tmdb(d?.bestBackdrop ?? t.backdropPath, "w1280")
         }
     }
 
@@ -71,7 +73,7 @@ struct HeroView: View {
                 } else { titleText }
                 Text(item.heroMeta).font(NxFont.ui(12, .semibold)).foregroundStyle(.white.opacity(0.92)).lineLimit(1)
                 if case .live(let s) = item, let p = s.progress(), s.isLive() { NxProgressBar(value: p).frame(maxWidth: 200) }
-                actions.padding(.top, 2)
+                actions.padding(.top, 2).frame(maxWidth: 440)
             }
             .padding(.horizontal, 14).padding(.bottom, 14)
         }
@@ -114,11 +116,12 @@ struct HeroCarousel: View {
     @State private var width: CGFloat = 390
 
     var body: some View {
-        let cardW = min(width - 36, 420)
+        let cardW = Metrics.isPad ? min(width - 80, 760) : min(width - 36, 420)
+        let ratio: CGFloat = Metrics.isPad ? 0.62 : 1.36
         VStack(spacing: 8) {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 10) {
-                    ForEach(items) { it in HeroView(item: it).frame(width: cardW, height: cardW * 1.36).id(it.id) }
+                    ForEach(items) { it in HeroView(item: it).frame(width: cardW, height: cardW * ratio).id(it.id) }
                 }
                 .scrollTargetLayout()
                 .padding(.horizontal, (width - cardW) / 2)
@@ -297,8 +300,17 @@ struct HomeView: View {
     @EnvironmentObject var app: AppModel
     @EnvironmentObject var store: LiveStore
     @StateObject private var model: HomeModel
+    @StateObject private var others = OthersWatcher()
+    private let pid: Int64
 
-    init(pid: Int64, kids: Bool) { _model = StateObject(wrappedValue: HomeModel(pid: pid, kids: kids)) }
+    init(pid: Int64, kids: Bool) { self.pid = pid; _model = StateObject(wrappedValue: HomeModel(pid: pid, kids: kids)) }
+
+    /// The Home, with what was left half way on another device on top.
+    private var state: HomeState {
+        var s = model.state
+        if let r = others.row, !s.rows.isEmpty { s.rows.insert(r, at: 0) }
+        return s
+    }
 
     var body: some View {
         Group {
@@ -307,11 +319,10 @@ struct HomeView: View {
                 NxTopBar(title: "Per \(app.profile?.name ?? "te")", back: false, large: true) {
                     BarIcon(icon: "magnifyingglass", label: "Cerca") { app.open(.search) }
                 }
-                BrowsePage(state: model.state) {
+                BrowsePage(state: state) {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
-                            NxChip(title: "Film", selected: false) { app.open(.vod("movie")) }
-                            NxChip(title: "Serie TV", selected: false) { app.open(.vod("tv")) }
+                            NxChip(title: "Guida TV", icon: "calendar", selected: false) { app.liveTab = 1; app.section = .live }
                             NxChip(title: "Le mie squadre", selected: false) { app.open(.teams) }
                             NxChip(title: "Download", selected: false) { app.open(.downloads) }
                         }
@@ -320,11 +331,11 @@ struct HomeView: View {
                 }
             }
             #else
-            BrowsePage(state: model.state)
+            BrowsePage(state: state)
             #endif
         }
         .nxPage()
-        .onAppear { model.start(store: store); model.rebuild(store) }
+        .onAppear { model.start(store: store); model.rebuild(store); others.start(pid: pid) }
         .onChange(of: store.version) { _, _ in model.rebuild(store) }
         .onChange(of: app.syncStatus) { _, _ in model.rebuild(store) }
     }

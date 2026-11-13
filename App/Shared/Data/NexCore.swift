@@ -29,6 +29,8 @@ final class NexCore {
     let resolver: PlaybackResolver
     /// Live <-> VOD bridge: recognised programmes <-> Stream4Me titles.
     let matcher: LiveVodMatcher
+    /// The same profiles, lists and positions on every device of the line.
+    let sync: SyncEngine
     /// Offline downloads (iPhone).
     lazy var downloads: Downloads = Downloads(core: self)
 
@@ -80,6 +82,7 @@ final class NexCore {
         recommender = Recommender(db: db, catalog: catalog, library: library)
         resolver = PlaybackResolver(engine: engine, db: db)
         matcher = LiveVodMatcher(db: db, catalog: catalog, channels: channels, meta: meta)
+        sync = SyncEngine(db: db, session: session, profiles: profiles, prefs: prefs, settings: settings)
     }
 
     /// Called once when the app starts.
@@ -116,6 +119,13 @@ final class NexCore {
         })
         // personal data changes are mirrored where they survive a cache purge (tvOS)
         watches.append(db.changes.observe { table in if Backup.tables.contains(table) { Backup.schedule(self) } })
+        // ...and sent to the other devices of the line
+        let synced: Set<String> = ["profiles", "favorites", "recents", "usage", "list_item", "progress", "watch_event", "reminders", "meta"]
+        watches.append(db.changes.observe { [weak self] table in if synced.contains(table) { self?.sync.kick() } })
+        watches.append(settings.rev.observe { [weak self] _ in self?.sync.kick() })
+        watches.append(prefs.values.observe { [weak self] _ in self?.sync.kick() })
+        watches.append(session.current.observe { [weak self] s in if s != nil { self?.sync.kick(after: 1) } })
+        watches.append(Vpn.shared.active.observe { [weak self] on in if on { self?.sync.kick(after: 3) } })
         let t = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
         t.schedule(deadline: .now() + 15, repeating: 20)
         var ticks = 0
@@ -123,6 +133,7 @@ final class NexCore {
             guard let self = self else { return }
             self.checkAlerts()
             ticks += 1
+            if ticks % 3 == 0 { self.sync.kick(after: 0) }
             // every 6 h: sources and search index; every 30 min: is the guide stale?
             if ticks % 90 == 0 && Vpn.shared.active.value && self.session.current.value != nil { self.syncIfNeeded() }
             if ticks % 1080 == 0 && Vpn.shared.active.value { Task { await self.updater.check(); await self.searchIndex.ensure() } }
@@ -146,6 +157,7 @@ final class NexCore {
     }
 
     func logout() {
+        sync.forgetAccount()
         session.clear()
         db.replaceLive([], [])
         db.replaceProgrammes([])
