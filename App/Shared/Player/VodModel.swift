@@ -79,6 +79,8 @@ final class VodPlayerModel: ObservableObject {
                 phase = .playing
             } else {
                 var s = retry ? nil : request.preResolved
+                // build pipeline: `-nxVodTest <url>` plays that stream instead of searching the sources
+                if s == nil, Demo.enabled, let u = Demo.value("-nxVodTest") { s = ResolvedStream(url: u, headers: [:], kind: "hls", server: "Test", channel: "test") }
                 if s == nil { s = await core.resolver.resolve(request) { [weak self] st in Task { @MainActor in
                     guard let me = self else { return }
                     if case .resolving = me.phase { me.phase = .resolving(st) }
