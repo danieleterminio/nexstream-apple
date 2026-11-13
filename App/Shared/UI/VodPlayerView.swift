@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// The on-demand player. Phone upright: the video on top, the title, the options and the episodes under it. Phone on
-/// its side: full screen with the controls over the picture. Apple TV: left / right move by 10 s, select or play/pause
-/// pauses, up opens the options.
+/// its side: full screen with the controls over the picture. Apple TV: drawn by `TvVodLayer` (TvPlayerChrome.swift),
+/// Netflix-like: select / play-pause pause, left / right seek (faster while the clicks keep coming), down reaches the
+/// options, every panel inside the player.
 struct VodPlayerView: View {
     @ObservedObject var model: VodPlayerModel
     @ObservedObject var player: NxPlayer
@@ -11,7 +12,8 @@ struct VodPlayerView: View {
     @EnvironmentObject var app: AppModel
     @StateObject private var chrome = ChromeState()
     @State private var countdown = 10
-    @FocusState private var focused: Bool
+    /// Apple TV: the button of the resolving / failed / ended / still-watching screens that takes the focus.
+    @FocusState private var phaseFocus: Int?
     #if os(iOS)
     @StateObject private var feedback = GestureFeedback()
     /// The drag under way: 0 undecided, 1 vertical (brightness / volume), 2 horizontal (ignored).
@@ -41,6 +43,10 @@ struct VodPlayerView: View {
         }
         .onAppear { chrome.show() }
         .onReceive(NotificationCenter.default.publisher(for: .nxRemoteKey)) { n in
+            #if os(tvOS)
+            // while the video plays TvVodLayer takes the keys; on the other screens BACK leaves
+            if model.phase != .playing && (n.object as? String) == "back" { app.closePlayer() }
+            #else
             switch n.object as? String {
             case "playpause", "ok": model.togglePlay(); chrome.show()
             case "left": model.seekBy(-10_000); chrome.show()
@@ -49,6 +55,7 @@ struct VodPlayerView: View {
             case "menu", "up": options()
             default: break
             }
+            #endif
         }
     }
 
@@ -73,23 +80,7 @@ struct VodPlayerView: View {
         }
         .clipped()
         #if os(tvOS)
-        .focusable(model.phase == .playing && app.sheets.isEmpty)
-        .focused($focused)
-        .onMoveCommand { dir in
-            switch dir {
-            case .left: model.seekBy(-10_000); chrome.show()
-            case .right: model.seekBy(10_000); chrome.show()
-            case .up: options()
-            case .down: chrome.show()
-            default: break
-            }
-        }
-        .onPlayPauseCommand { model.togglePlay(); chrome.show() }
-        .onTapGesture { if model.seekTarget != nil { model.applySeek() } else { model.togglePlay() }; chrome.show() }
-        .onExitCommand { if chrome.visible && model.phase == .playing && !model.paused { chrome.hide() } else { app.closePlayer() } }
-        .onAppear { focused = true }
-        .onChange(of: app.sheets.isEmpty) { _, empty in if empty { focused = true } }
-        .onChange(of: model.phase) { _, p in if p == .playing { focused = true } }
+        .onChange(of: model.phase) { _, p in if p != .playing { DispatchQueue.main.async { phaseFocus = 0 } } }
         #else
         .background(VolumeHook().frame(width: 1, height: 1).opacity(0.02))
         #endif
@@ -154,11 +145,16 @@ struct VodPlayerView: View {
                 Text(status).font(NxFont.meta).foregroundStyle(NxColor.textMuted)
                 #if os(tvOS)
                 NxButton("Annulla", kind: .secondary) { app.closePlayer() }.padding(.top, 10)
+                    .tvPhaseFocus($phaseFocus, 0)
                 #endif
             }
             .padding(Metrics.u(16))
             closeCorner
         }
+        #if os(tvOS)
+        .onExitCommand { app.closePlayer() }
+        .onAppear { DispatchQueue.main.async { phaseFocus = 0 } }
+        #endif
     }
 
     private func failed(_ message: String) -> some View {
@@ -169,7 +165,9 @@ struct VodPlayerView: View {
                 Text(message).font(full ? NxFont.body : NxFont.caption).foregroundStyle(NxColor.textMuted).multilineTextAlignment(.center).lineLimit(3)
                 HStack(spacing: Metrics.u(10)) {
                     NxButton("Riprova", icon: "arrow.clockwise", kind: .primary) { model.start(retry: true) }
+                        .tvPhaseFocus($phaseFocus, 0)
                     NxButton("Chiudi", kind: .secondary) { app.closePlayer() }
+                        .tvPhaseFocus($phaseFocus, 1)
                 }
                 .padding(.top, 4)
                 #if os(tvOS)
@@ -178,9 +176,16 @@ struct VodPlayerView: View {
             }
             .padding(Metrics.u(14)).frame(maxWidth: Metrics.u(460))
         }
+        #if os(tvOS)
+        .onExitCommand { app.closePlayer() }
+        .onAppear { DispatchQueue.main.async { phaseFocus = 0 } }
+        #endif
     }
 
     @ViewBuilder private var playingOverlay: some View {
+        #if os(tvOS)
+        TvVodLayer(model: model, player: player, chrome: chrome)
+        #else
         if player.state == .opening || player.state == .buffering { BrandLoader(size: full ? 56 : 40) }
         if chrome.visible || model.paused || model.seekTarget != nil { controlsView.transition(.opacity) }
         if model.creditsVisible, let n = model.nextRequest(auto: false) {
@@ -197,45 +202,11 @@ struct VodPlayerView: View {
             }
             .padding(.horizontal, Metrics.u(16)).padding(.bottom, Metrics.u(Metrics.tv ? 110 : (full ? 96 : 44)))
         }
+        #endif
     }
 
+    #if os(iOS)
     @ViewBuilder private var controlsView: some View {
-        #if os(tvOS)
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(model.details.displayTitle).font(NxFont.display(24, .bold)).foregroundStyle(.white).lineLimit(1)
-                if !model.subtitle.isEmpty { Text(model.subtitle).font(NxFont.meta).foregroundStyle(NxColor.textMuted).lineLimit(1) }
-            }
-            .padding(.horizontal, 80).padding(.top, 70)
-            Spacer()
-            if model.paused && model.seekTarget == nil {
-                Image(systemName: "pause.fill").font(.system(size: 90, weight: .bold)).foregroundStyle(.white.opacity(0.9)).frame(maxWidth: .infinity)
-                Spacer()
-            }
-            VStack(spacing: 14) {
-                GeometryReader { g in
-                    let f = model.duration > 0 ? CGFloat(max(0, min(1, Double(model.position) / Double(model.duration)))) : 0
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Color.white.opacity(0.3)).frame(height: 8)
-                        Capsule().fill(NxColor.accent).frame(width: g.size.width * f, height: 8)
-                        Circle().fill(NxColor.accent).frame(width: 26, height: 26).offset(x: g.size.width * f - 13)
-                    }
-                    .frame(height: 26)
-                }
-                .frame(height: 26)
-                HStack {
-                    Text(playerClock(model.position)).font(NxFont.ui(13, .heavy)).foregroundStyle(.white).monospacedDigit()
-                    Spacer()
-                    Text("◀ ▶ 10 secondi     ▲ audio, sottotitoli, episodi").font(NxFont.ui(11, .semibold)).foregroundStyle(NxColor.textDim)
-                    Spacer()
-                    Text(model.duration > 0 ? "-" + playerClock(model.duration - model.position) : "").font(NxFont.ui(13, .heavy)).foregroundStyle(NxColor.textMuted).monospacedDigit()
-                }
-            }
-            .padding(.horizontal, 80).padding(.bottom, 60)
-        }
-        .background(LinearGradient(stops: [.init(color: .black.opacity(0.7), location: 0), .init(color: .clear, location: 0.3), .init(color: .clear, location: 0.6), .init(color: .black.opacity(0.85), location: 1)], startPoint: .top, endPoint: .bottom).allowsHitTesting(false))
-        .ignoresSafeArea()
-        #else
         ZStack {
             PlayerScrim()
             VStack(spacing: 0) {
@@ -285,8 +256,8 @@ struct VodPlayerView: View {
                 .padding(.leading, full ? 16 : 10).padding(.trailing, full ? 10 : 2).padding(.bottom, full ? 4 : 0)
             }
         }
-        #endif
     }
+    #endif
 
     private var ended: some View {
         let next = model.nextRequest(auto: true)
@@ -300,12 +271,15 @@ struct VodPlayerView: View {
                     if autoplay { Text("Parte tra \(countdown) secondi").font(NxFont.meta).foregroundStyle(NxColor.textMuted) }
                     HStack(spacing: Metrics.u(10)) {
                         NxButton("Guarda ora", icon: "play.fill", kind: .primary) { var x = n; x.auto = false; app.core.watchSession.touch(); app.play(x) }
+                            .tvPhaseFocus($phaseFocus, 0)
                         NxButton("Chiudi", kind: .secondary) { app.closePlayer() }
+                            .tvPhaseFocus($phaseFocus, 1)
                     }
                 } else {
                     Text(model.details.displayTitle).font(NxFont.titleL).foregroundStyle(NxColor.text).lineLimit(2)
                     Text("Fine").font(NxFont.meta).foregroundStyle(NxColor.textMuted)
                     NxButton("Chiudi", kind: .primary) { app.closePlayer() }
+                        .tvPhaseFocus($phaseFocus, 0)
                 }
             }
             .padding(Metrics.u(14))
@@ -313,6 +287,10 @@ struct VodPlayerView: View {
             .focusSection()
             #endif
         }
+        #if os(tvOS)
+        .onExitCommand { app.closePlayer() }
+        .onAppear { DispatchQueue.main.async { phaseFocus = 0 } }
+        #endif
         .task {
             guard autoplay, let n = next else { return }
             countdown = 10
@@ -337,7 +315,9 @@ struct VodPlayerView: View {
                         app.core.watchSession.touch()
                         if let n = model.nextRequest(auto: false) { app.play(n) } else { app.closePlayer() }
                     }
+                    .tvPhaseFocus($phaseFocus, 0)
                     NxButton("Esci", kind: .secondary) { app.closePlayer() }
+                        .tvPhaseFocus($phaseFocus, 1)
                 }
             }
             .padding(Metrics.u(14))
@@ -345,6 +325,10 @@ struct VodPlayerView: View {
             .focusSection()
             #endif
         }
+        #if os(tvOS)
+        .onExitCommand { app.closePlayer() }
+        .onAppear { DispatchQueue.main.async { phaseFocus = 0 } }
+        #endif
     }
 
     // MARK: panels
