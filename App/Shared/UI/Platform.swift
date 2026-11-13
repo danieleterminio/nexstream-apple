@@ -46,7 +46,7 @@ final class PlatformServices: NSObject, AlertScheduler {
     private var bgTask: UIBackgroundTaskIdentifier = .invalid
 
     /// While something downloads, the app asks for the extra time iOS gives when it leaves the screen (about 30 s);
-    /// files keep going in the system's transfer service anyway, HLS segments only while the app runs.
+    /// after that, the app's own BGProcessingTask carries on (every byte still passes the VPN check).
     private func downloadTime(_ on: Bool) {
         if on {
             if bgTask != .invalid { return }
@@ -192,13 +192,6 @@ final class NxAppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         PlatformServices.shared.registerBackgroundDownloads()
         return true
-    }
-
-    /// iOS woke the app because background file transfers finished: the queue takes them over.
-    func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
-        guard identifier == FileLoader.sessionId else { completionHandler(); return }
-        FileLoader.shared.backgroundCompletion = completionHandler
-        NexCore.shared.downloads.wake()
     }
 
     /// Siri's "riproduci … su NexStream" is answered inside the app (no extension).

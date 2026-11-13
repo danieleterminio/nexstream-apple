@@ -11,7 +11,7 @@ struct DownloadError: Error, CustomStringConvertible { let description: String }
 struct DownloadStop: Error {}
 
 /// Where a download stands, saved next to it: after a restart it goes on from the last finished segment (HLS) or from
-/// the system's resume data (plain files) instead of starting from zero.
+/// the last byte saved (plain files, HTTP Range) instead of starting from zero.
 struct DownloadInfo: Codable, Equatable {
     var quality: String = ""
     /// The media playlist / file being saved.
@@ -44,7 +44,7 @@ final class DownloadJob {
 
 /// Saves a stream to one local file. HLS (most Stream4Me sources) is fetched segment by segment and the segments are
 /// written one after the other — MPEG-TS and fragmented MP4 both play that way; AES-128 segments are decrypted on the fly.
-/// The variant is the one the "Qualità" setting asks for. Plain files go through `FileLoader` (system background transfers).
+/// The variant is the one the "Qualità" setting asks for. Plain files go through `FileStreamer` (in this process too).
 enum StreamDownloader {
     private static let attr = Rx(#"([A-Z0-9-]+)=("[^"]*"|[^,]*)"#)
 
@@ -223,189 +223,152 @@ enum StreamDownloader {
 
     private static func file(_ url: String, _ headers: [String: String], _ dest: URL, _ job: DownloadJob) async throws -> String {
         guard let u = URL(string: url) ?? URL(string: url.addingPercentEncoding(withAllowedCharacters: .urlFragmentAllowed) ?? "") else { throw DownloadError(description: "Indirizzo non valido.") }
-        if !Vpn.shared.active.value { throw VpnRequiredError() }
         let known = ["mp4", "m4v", "mov", "mkv", "avi", "webm", "ts"]
         let ext = known.contains(u.pathExtension.lowercased()) ? u.pathExtension.lowercased() : "mp4"
-        let canResume = job.info.url == url && FileLoader.shared.hasResume(job.id)
+        // the same file as before and its part is all there: go on from where it stopped (HTTP Range)
+        let fm = FileManager.default
+        let have = ((try? fm.attributesOfItem(atPath: dest.path))?[.size] as? NSNumber)?.int64Value ?? -1
+        var from: Int64 = 0
+        if job.info.url == url && job.info.ext == ext && job.info.segTotal == 0 && job.info.bytes > 0 && have >= job.info.bytes {
+            from = job.info.bytes
+            NxLog.i("NxDownloads", "\(job.id): resuming the file at \(Downloads.size(from))")
+        } else {
+            fm.createFile(atPath: dest.path, contents: nil)
+            job.info.bytes = 0
+        }
         job.info.url = url
         job.info.ext = ext
         job.info.segDone = 0; job.info.segTotal = 0
         job.save(job.info)
-        let report: (Int64, Int64) -> Void = { got, total in
+        var lastSave = Clock.now
+        try await FileStreamer.shared.run(url: u, headers: headers, cellular: job.cellular, dest: dest, from: from, check: job.check) { got, total in
             job.info.bytes = got
+            if Clock.now - lastSave > 2000 { lastSave = Clock.now; job.save(job.info) }
             job.progress(total > 0 ? Double(got) / Double(total) : 0, got)
         }
-        do {
-            try await FileLoader.shared.run(id: job.id, url: u, headers: headers, cellular: job.cellular, resume: canResume, progress: report)
-        } catch {
-            // resume data the server no longer accepts: once more from the start
-            try job.check()
-            guard canResume, !(error is DownloadStop) else { throw error }
-            NxLog.w("NxDownloads", "\(job.id): resume refused (\(error)), starting the file again")
-            try await FileLoader.shared.run(id: job.id, url: u, headers: headers, cellular: job.cellular, resume: false, progress: report)
-        }
+        job.save(job.info)
         try job.check()
         return ext
     }
 }
 
-/// Plain files go through the system's background transfer service, so they keep coming while the app is suspended
-/// (its own code only gets a few seconds there). Sources behind the add-on's local proxy (127.0.0.1) can only be read
-/// while the app runs: those use an ordinary session. A stopped file keeps what it saved as resume data.
-final class FileLoader: NSObject, URLSessionDownloadDelegate {
-    static let shared = FileLoader()
-    static let sessionId = "app.nexstream.one.downloads"
-    /// Where the file of a download goes (`<id>.part`) and where its resume data is kept.
-    var destFor: ((String) -> URL)? = nil
-    var resumeFor: ((String) -> URL)? = nil
-    /// A background transfer finished while nobody was waiting for it (the app had been closed): the queue adopts it.
-    var onOrphan: ((String) -> Void)? = nil
-    /// The system's completion handler after it woke the app for finished transfers.
-    var backgroundCompletion: (() -> Void)? = nil
+/// Plain files, read in this process like the HLS segments: every block that arrives passes the same check (VPN on,
+/// room left, Wi-Fi when asked for) before it is written, and the transfer is cut as soon as the check fails. Nothing is
+/// handed to the system's background transfer service, which would carry on without the VPN while the app is suspended.
+/// A stopped file keeps what it saved and goes on with an HTTP Range request (also after a restart).
+final class FileStreamer: NSObject, URLSessionDataDelegate {
+    static let shared = FileStreamer()
+    /// The background session of the older versions: its leftover transfers are cancelled once at start.
+    static let legacySessionId = "app.nexstream.one.downloads"
+
+    private final class Transfer {
+        let out: FileHandle
+        var got: Int64
+        var total: Int64 = 0
+        let from: Int64
+        let check: () throws -> Void
+        let progress: (Int64, Int64) -> Void
+        var failure: Error? = nil
+        var done: ((Error?) -> Void)?
+        init(out: FileHandle, from: Int64, check: @escaping () throws -> Void, progress: @escaping (Int64, Int64) -> Void, done: @escaping (Error?) -> Void) {
+            self.out = out; self.got = from; self.from = from; self.check = check; self.progress = progress; self.done = done
+        }
+    }
 
     private let lock = NSLock()
-    private var waiters = [String: (Error?) -> Void]()
-    private var progress = [String: (Int64, Int64) -> Void]()
-    private var failures = [String: Error]()
-    private var bgSession: URLSession? = nil
-    private var fgSession: URLSession? = nil
-
-    private var bg: URLSession {
-        lock.lock(); defer { lock.unlock() }
-        if let s = bgSession { return s }
-        #if os(iOS) || os(tvOS)
-        let c = URLSessionConfiguration.background(withIdentifier: FileLoader.sessionId)
-        #if os(iOS)
-        c.sessionSendsLaunchEvents = true
-        #endif
-        c.isDiscretionary = false
-        #else
-        let c = URLSessionConfiguration.default
-        #endif
-        c.timeoutIntervalForResource = 7 * 86_400
-        let s = URLSession(configuration: c, delegate: self, delegateQueue: nil)
-        bgSession = s
-        return s
-    }
-    private var fg: URLSession {
-        lock.lock(); defer { lock.unlock() }
-        if let s = fgSession { return s }
+    private var transfers = [Int: Transfer]()
+    private lazy var session: URLSession = {
         let c = URLSessionConfiguration.default
         c.timeoutIntervalForRequest = 60
-        let s = URLSession(configuration: c, delegate: self, delegateQueue: nil)
-        fgSession = s
-        return s
-    }
+        c.timeoutIntervalForResource = 7 * 86_400
+        c.requestCachePolicy = .reloadIgnoringLocalCacheData
+        c.urlCache = nil
+        let q = OperationQueue()
+        q.maxConcurrentOperationCount = 1
+        return URLSession(configuration: c, delegate: self, delegateQueue: q)
+    }()
 
-    /// Re-attaches to the transfers of the previous run (the system delivers their events once the session exists).
-    func attach() { _ = bg }
-
-    func hasResume(_ id: String) -> Bool { resumeFor.map { FileManager.default.fileExists(atPath: $0(id).path) } ?? false }
-
-    private func tasks(_ s: URLSession) async -> [URLSessionTask] {
-        await withCheckedContinuation { (c: CheckedContinuation<[URLSessionTask], Never>) in s.getAllTasks { c.resume(returning: $0) } }
-    }
-
-    /// Saves `url` into the download's part file; returns when it is all there.
-    func run(id: String, url: URL, headers: [String: String], cellular: Bool, resume: Bool, progress p: @escaping (Int64, Int64) -> Void) async throws {
-        let local = url.host == "127.0.0.1" || url.host == "localhost"
-        let session = local ? fg : bg
-        // a transfer started before the app was closed is picked up as it is
-        let existing = await tasks(session).first { $0.taskDescription == id && ($0.state == .running || $0.state == .suspended) }
-        var resumeData: Data? = nil
-        if let r = resumeFor?(id) {
-            if existing == nil && resume { resumeData = try? Data(contentsOf: r) }
-            try? FileManager.default.removeItem(at: r)
+    /// Cancels whatever the background session of an older version still had going. Once per launch.
+    static func cancelLegacyTransfers() {
+        #if os(iOS)
+        let s = URLSession(configuration: URLSessionConfiguration.background(withIdentifier: legacySessionId))
+        s.getAllTasks { tasks in
+            if !tasks.isEmpty { NxLog.i("NxDownloads", "cancelled \(tasks.count) leftover background transfers") }
+            for t in tasks { t.cancel() }
+            s.invalidateAndCancel()
         }
+        #endif
+    }
+
+    /// Writes `url` into `dest` from byte `from` on; returns when it is all there. Throws `DownloadStop` when `check` says so.
+    func run(url: URL, headers: [String: String], cellular: Bool, dest: URL, from: Int64, check: @escaping () throws -> Void, progress: @escaping (Int64, Int64) -> Void) async throws {
+        try check()
+        if !Vpn.shared.active.value { throw VpnRequiredError() }
+        guard let out = try? FileHandle(forWritingTo: dest) else { throw DownloadError(description: "Non riesco a scrivere il file.") }
+        try out.truncate(atOffset: UInt64(from))
+        _ = try out.seekToEnd()
+        var req = URLRequest(url: url, timeoutInterval: 60)
+        req.allowsCellularAccess = cellular
+        for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
+        if from > 0 { req.setValue("bytes=\(from)-", forHTTPHeaderField: "Range") }
         try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
-            lock.lock()
-            waiters[id] = { e in if let e = e { c.resume(throwing: e) } else { c.resume() } }
-            progress[id] = p
-            failures[id] = nil
-            lock.unlock()
-            if let t = existing { t.resume(); return }
-            let task: URLSessionDownloadTask
-            if let rd = resumeData { task = session.downloadTask(withResumeData: rd) }
-            else {
-                var req = URLRequest(url: url, timeoutInterval: 60)
-                req.allowsCellularAccess = cellular
-                for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
-                task = session.downloadTask(with: req)
+            let task = session.dataTask(with: req)
+            let t = Transfer(out: out, from: from, check: check, progress: progress) { e in
+                try? out.close()
+                if let e = e { c.resume(throwing: e) } else { c.resume() }
             }
-            task.taskDescription = id
+            lock.lock(); transfers[task.taskIdentifier] = t; lock.unlock()
             task.resume()
         }
     }
 
-    /// Stops every transfer, also the ones the system carried on from a previous run (the VPN went off).
-    func stopAll() {
-        lock.lock(); let sessions = [bgSession, fgSession].compactMap { $0 }; lock.unlock()
-        for s in sessions {
-            s.getAllTasks { [weak self] tasks in
-                for t in tasks {
-                    guard let id = t.taskDescription, let d = t as? URLSessionDownloadTask else { t.cancel(); continue }
-                    d.cancel(byProducingResumeData: { data in
-                        if let data = data, let u = self?.resumeFor?(id) { try? data.write(to: u) }
-                    })
-                }
+    /// Cuts at once the transfers whose check now fails (paused, removed, VPN off), even if no block is arriving.
+    func recheck() {
+        session.getAllTasks { [weak self] tasks in
+            guard let self = self else { return }
+            for task in tasks {
+                guard let t = self.transfer(task), t.failure == nil else { continue }
+                do { try t.check(); if !Vpn.shared.active.value { throw VpnRequiredError() } } catch { t.failure = error; task.cancel() }
             }
         }
     }
 
-    /// Stops a transfer, keeping what it saved.
-    func stop(_ id: String) {
-        lock.lock(); let sessions = [bgSession, fgSession].compactMap { $0 }; lock.unlock()
-        for s in sessions {
-            s.getAllTasks { [weak self] tasks in
-                for t in tasks where t.taskDescription == id {
-                    if let d = t as? URLSessionDownloadTask {
-                        d.cancel(byProducingResumeData: { data in
-                            if let data = data, let u = self?.resumeFor?(id) { try? data.write(to: u) }
-                        })
-                    } else { t.cancel() }
-                }
-            }
-        }
-    }
+    private func transfer(_ task: URLSessionTask) -> Transfer? { lock.lock(); defer { lock.unlock() }; return transfers[task.taskIdentifier] }
 
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        guard let id = downloadTask.taskDescription else { return }
-        let status = (downloadTask.response as? HTTPURLResponse)?.statusCode ?? 200
-        if status < 200 || status >= 300 {
-            lock.lock(); failures[id] = HttpError(status: status, url: downloadTask.originalRequest?.url?.absoluteString ?? ""); lock.unlock()
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        guard let t = transfer(dataTask) else { completionHandler(.cancel); return }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 200 && t.from > 0 {
+            // the server ignores ranges: the whole file again
+            do { try t.out.truncate(atOffset: 0); _ = try t.out.seekToEnd() } catch { t.failure = error; completionHandler(.cancel); return }
+            t.got = 0
+        } else if status != 200 && status != 206 {
+            t.failure = HttpError(status: status, url: dataTask.originalRequest?.url?.absoluteString ?? "")
+            completionHandler(.cancel)
             return
         }
-        guard let dest = destFor?(id) else { return }
-        // the file must be moved before this returns: the system deletes it right after
-        try? FileManager.default.removeItem(at: dest)
-        do { try FileManager.default.moveItem(at: location, to: dest) }
-        catch { lock.lock(); failures[id] = error; lock.unlock() }
+        let len = response.expectedContentLength
+        t.total = len > 0 ? t.got + len : 0
+        completionHandler(.allow)
     }
 
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        guard let id = downloadTask.taskDescription else { return }
-        lock.lock(); let p = progress[id]; lock.unlock()
-        p?(totalBytesWritten, totalBytesExpectedToWrite)
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        guard let t = transfer(dataTask), t.failure == nil else { return }
+        // every block passes the check before it is kept: VPN off (or anything else) cuts the transfer here
+        do { try t.check() } catch { t.failure = error; dataTask.cancel(); return }
+        if !Vpn.shared.active.value { t.failure = VpnRequiredError(); dataTask.cancel(); return }
+        t.out.write(data)
+        t.got += Int64(data.count)
+        t.progress(t.got, t.total)
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard let id = task.taskDescription else { return }
-        lock.lock()
-        let w = waiters.removeValue(forKey: id)
-        progress[id] = nil
-        let failure = failures.removeValue(forKey: id)
-        lock.unlock()
-        if let e = error as NSError?, let data = e.userInfo["NSURLSessionDownloadTaskResumeData"] as? Data, let u = resumeFor?(id) { try? data.write(to: u) }
-        let result: Error? = error ?? failure
-        if let w = w { w(result) } else if result == nil { onOrphan?(id) }
-    }
-
-    func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
-        DispatchQueue.main.async {
-            let c = self.backgroundCompletion
-            self.backgroundCompletion = nil
-            c?()
-        }
+        lock.lock(); let t = transfers.removeValue(forKey: task.taskIdentifier); lock.unlock()
+        guard let t = t else { return }
+        let result: Error? = t.failure ?? error
+        if result == nil && t.total > 0 && t.got < t.total { t.done?(DownloadError(description: "File incompleto.")) }
+        else { t.done?(result) }
+        t.done = nil
     }
 }
 
@@ -439,10 +402,7 @@ final class Downloads {
     init(core: NexCore) {
         self.core = core
         NetMonitor.shared.start()
-        FileLoader.shared.destFor = { [weak self] id in self?.partURL(id) ?? Paths.tmp.appendingPathComponent("\(id).part") }
-        FileLoader.shared.resumeFor = { [weak self] id in self?.dir.appendingPathComponent("\(id).resume") ?? Paths.tmp.appendingPathComponent("\(id).resume") }
-        FileLoader.shared.onOrphan = { [weak self] id in self?.adopt(id) }
-        FileLoader.shared.attach()
+        FileStreamer.cancelLegacyTransfers()
         watches.append(Vpn.shared.active.observe(fire: false) { [weak self] _ in self?.pump() })
         watches.append(NetMonitor.shared.expensive.observe(fire: false) { [weak self] _ in self?.pump() })
         watches.append(NetMonitor.shared.online.observe(fire: false) { [weak self] _ in self?.pump() })
@@ -599,7 +559,7 @@ final class Downloads {
         let on = running[id] != nil
         if on && stops[id] != .removed { stops[id] = why }
         lock.unlock()
-        if on { FileLoader.shared.stop(id) }
+        if on { FileStreamer.shared.recheck() }
     }
 
     /// Looks at the queue: stops everything while something keeps it from moving, else starts what waits (two at a time).
@@ -618,8 +578,7 @@ final class Downloads {
         if firstRun { for r in rows where r.state == "running" && !active.contains(r.id) { var x = r; x.state = "queued"; core.db.upsertDownload(x) } }
         if let r = reason {
             for id in active { stop(id, .system) }
-            // nothing may go out without the VPN, not even what the system's transfer service carried on by itself
-            if r == .vpn || r == .wifi { FileLoader.shared.stopAll() }
+            FileStreamer.shared.recheck()
             onActivity?(false)
             return
         }
@@ -699,8 +658,6 @@ final class Downloads {
                 return
             }
             if stopFor(id) != nil || blockReason() != nil { settle(); return }
-            // finished meanwhile by a background transfer of the previous run
-            if core.db.download(id)?.state == "done" { return }
             if let ch = info.channel, ch != stream.channel { info.segDone = 0; info.segTotal = 0; info.bytes = 0; info.url = nil }
             info.channel = stream.channel
             let before = info.segDone, beforeBytes = info.bytes
@@ -750,15 +707,5 @@ final class Downloads {
         core.db.upsertDownload(row)
         NxLog.i("NxDownloads", "\(id) done (\(Downloads.size(row.bytes)))")
         onFinished?(row)
-    }
-
-    /// A background transfer of the previous run finished on its own: the file is complete.
-    private func adopt(_ id: String) {
-        guard let row = core.db.download(id), row.state != "done", FileManager.default.fileExists(atPath: partURL(id).path) else { return }
-        lock.lock()
-        if running[id] != nil { stops[id] = .removed }
-        lock.unlock()
-        let i = info(id) ?? DownloadInfo()
-        finish(row, ext: i.ext ?? "mp4", info: i)
     }
 }
