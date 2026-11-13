@@ -124,8 +124,8 @@ struct HeroCarousel: View {
                     ForEach(items) { it in HeroView(item: it).frame(width: cardW, height: cardW * ratio).id(it.id) }
                 }
                 .scrollTargetLayout()
-                .padding(.horizontal, (width - cardW) / 2)
             }
+            .contentMargins(.horizontal, max(0, (width - cardW) / 2), for: .scrollContent)
             .scrollTargetBehavior(.viewAligned)
             .scrollPosition(id: $slide)
             if items.count > 1 {
