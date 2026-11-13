@@ -507,7 +507,7 @@ final class Downloads {
         return (used, freeSpace())
     }
     func freeSpace() -> Int64 {
-        #if os(iOS) || os(tvOS) || os(macOS)
+        #if os(iOS) || os(macOS)
         if let v = try? dir.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage, v > 0 { return v }
         #endif
         if let a = try? FileManager.default.attributesOfFileSystem(forPath: dir.path), let n = a[.systemFreeSize] as? NSNumber { return n.int64Value }
