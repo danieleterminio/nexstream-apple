@@ -58,6 +58,8 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
     @Published private(set) var pipPossible = false
     /// The video is on an AirPlay screen.
     @Published private(set) var external = false
+    /// Why the last stream failed, in words for the viewer (HTTP status, network, decoder), when it is known.
+    @Published private(set) var failureReason: String? = nil
     /// Bumped when the audio / subtitle tracks of the stream become known.
     @Published private(set) var tracksVersion = 0
     /// Zoom to fill the screen (crops the sides on a phone) instead of showing the whole picture.
@@ -89,6 +91,9 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
     private var subOptions = [AVMediaSelectionOption]()
     private var savedVideoTrack: Int32? = nil
     private var playingSince: Date? = nil
+    /// Live: new pictures are counted here, so a frozen picture can be told from a stream that plays.
+    private var videoOutput: AVPlayerItemVideoOutput? = nil
+    private var frameCount = 0
     private static let stopQueue = DispatchQueue(label: "nx.player.stop")
     #if os(iOS)
     private var pip: AVPictureInPictureController? = nil
@@ -197,6 +202,9 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
         everPlayed = false
         playingSince = nil
         savedVideoTrack = nil
+        failureReason = nil
+        videoOutput = nil
+        frameCount = 0
         stopEngines()
     }
 
@@ -236,9 +244,9 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
             NxLog.i("NxPlayer", "system player cannot decode \(what): VLC")
             self.fallbackToVlc(remember: true)
         }
-        p.onEnded = { [weak self] early in
+        p.onEnded = { [weak self, weak p] early in
             guard let self = self, self.gen == g else { return }
-            if early { self.fail(); return }
+            if early { self.failureReason = NxPlayer.describe(proxyFailure: p?.failure); self.fail(); return }
             // the line closed the stream: the playlist is now closed too, so what is buffered plays out and the
             // system player reports the end by itself; the caller then connects again
         }
@@ -253,7 +261,12 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
         if !headers.isEmpty { opts["AVURLAssetHTTPHeaderFieldsKey"] = headers }
         let asset = AVURLAsset(url: u, options: opts)
         let item = AVPlayerItem(asset: asset)
-        if live { item.preferredForwardBufferDuration = 6 }
+        if live {
+            item.preferredForwardBufferDuration = 6
+            let o = AVPlayerItemVideoOutput(pixelBufferAttributes: nil)
+            item.add(o)
+            videoOutput = o
+        }
         let g = gen
         itemObs = [
             item.observe(\.status, options: [.new]) { [weak self] it, _ in DispatchQueue.main.async { self?.itemStatus(it, g) } },
@@ -264,8 +277,9 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
             self.state = .ended
             self.onEnded?()
         })
-        noteObs.append(nc.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main) { [weak self] _ in
+        noteObs.append(nc.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main) { [weak self] n in
             guard let self = self, self.gen == g, self.loaded else { return }
+            self.failureReason = NxPlayer.describe(n.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error, item)
             self.systemFailed()
         })
         av.replaceCurrentItem(with: item)
@@ -279,6 +293,7 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
         switch item.status {
         case .failed:
             NxLog.w("NxPlayer", "system player: \(item.error?.localizedDescription ?? "failed")")
+            failureReason = NxPlayer.describe(item.error, item)
             systemFailed()
         case .readyToPlay:
             let d = item.duration
@@ -356,6 +371,56 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
             playingSince = nil
             fallbackToVlc(remember: true)
         }
+    }
+
+    // MARK: what went wrong
+
+    /// The LiveProxy's reason ("http:403", "network") in words.
+    static func describe(proxyFailure f: String?) -> String? {
+        guard let f = f else { return nil }
+        if f == "network" { return "Nessuna connessione al server del canale. Controlla la rete e la VPN." }
+        if f.hasPrefix("http:"), let code = Int(f.dropFirst(5)) { return describe(http: code) }
+        return nil
+    }
+    static func describe(http code: Int) -> String {
+        switch code {
+        case 403: return "Il server rifiuta la connessione (HTTP 403). Di solito succede quando la linea è già in uso su un altro dispositivo."
+        case 404: return "Questo canale non è disponibile al momento sulla linea (HTTP 404)."
+        default: return "Il server del canale non risponde (HTTP \(code))."
+        }
+    }
+    /// An error of the system player in words: the HTTP status in the item's error log, the network, the decoder.
+    static func describe(_ error: Error?, _ item: AVPlayerItem?) -> String? {
+        if let code = item?.errorLog()?.events.last?.errorStatusCode, code >= 400 { return describe(http: code) }
+        guard let e = error as NSError? else { return nil }
+        let inner = e.userInfo[NSUnderlyingErrorKey] as? NSError
+        for x in [e, inner].compactMap({ $0 }) where x.domain == NSURLErrorDomain {
+            switch x.code {
+            case NSURLErrorNotConnectedToInternet, NSURLErrorTimedOut, NSURLErrorCannotConnectToHost, NSURLErrorNetworkConnectionLost, NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed:
+                return "Nessuna connessione al server del canale. Controlla la rete e la VPN."
+            default: break
+            }
+        }
+        if e.domain == AVFoundationErrorDomain, let c = AVError.Code(rawValue: e.code) {
+            switch c {
+            case .decoderNotFound, .decodeFailed, .decoderTemporarilyUnavailable, .fileFormatNotRecognized, .failedToParse:
+                return "Questo dispositivo non riesce a decodificare il flusso del canale."
+            default: break
+            }
+        }
+        return nil
+    }
+
+    /// Pictures shown so far on a live channel (system player; nil when unknown or the stream has no video). The live
+    /// watchdog uses it to notice a picture that froze while the sound goes on.
+    func framesShown() -> Int? {
+        guard loaded, engine == .system, let out = videoOutput, (proxy?.info?.video ?? 1) != 0 else { return nil }
+        let t = out.itemTime(forHostTime: CACurrentMediaTime())
+        if out.hasNewPixelBuffer(forItemTime: t) {
+            _ = out.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil)
+            frameCount += 1
+        }
+        return frameCount
     }
 
     // MARK: VLC

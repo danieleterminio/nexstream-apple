@@ -35,7 +35,7 @@ extension HeroItem {
             if let d = d {
                 if d.isTv, d.numberOfSeasons > 0 { parts.append(d.numberOfSeasons == 1 ? "1 stagione" : "\(d.numberOfSeasons) stagioni") }
                 else if d.runtimeMin > 0 { parts.append(TimeText.duration(minutes: d.runtimeMin)) }
-                parts += d.genres.prefix(2).map { $0.name }
+                parts += d.genres.prefix(2).map { TmdbDetails.genreIt($0.name) }
             } else { parts.append(t.isTv ? "Serie TV" : "Film") }
             return parts.joined(separator: "  ·  ")
         }
@@ -308,7 +308,7 @@ struct HomeView: View {
     /// The Home, with what was left half way on another device on top.
     private var state: HomeState {
         var s = model.state
-        if let r = others.row, !s.rows.isEmpty { s.rows.insert(r, at: 0) }
+        if let r = others.row { s.rows.insert(r, at: 0) }
         return s
     }
 

@@ -28,6 +28,8 @@ final class LiveProxy: NSObject, URLSessionDataDelegate {
     private var ended = false
     private var upstream: URLRequest?
     private(set) var info: TsSegmenter.StreamInfo? = nil
+    /// Why the download from the line stopped, when it is known: "http:403", "network".
+    private(set) var failure: String? = nil
 
     private static let windowSize = 6
     private static let kept = 14
@@ -99,6 +101,7 @@ final class LiveProxy: NSObject, URLSessionDataDelegate {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if status < 200 || status >= 300 {
             NxLog.w("NxProxy", "line answered \(status)")
+            failure = "http:\(status)"
             completionHandler(.cancel)
             finish(early: true)
             return
@@ -113,7 +116,11 @@ final class LiveProxy: NSObject, URLSessionDataDelegate {
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if stopped { return }
-        if let e = error { NxLog.w("NxProxy", "download ended: \(e.localizedDescription)") }
+        if let e = error {
+            NxLog.w("NxProxy", "download ended: \(e.localizedDescription)")
+            let ns = e as NSError
+            if failure == nil && ns.domain == NSURLErrorDomain && ns.code != NSURLErrorCancelled { failure = "network" }
+        }
         segmenter.finish()
         ended = true
         if !readySent && !segments.isEmpty && !unsupported { publish() }

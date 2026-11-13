@@ -24,6 +24,7 @@ struct NexStreamApp: App {
                     if p == .active { RemoteHost.shared.start() } else if p == .background { RemoteHost.shared.stop() }
                     #else
                     if p == .active { app.core.downloads.wake(); app.playerHidden = false }
+                    if p == .background { PlatformServices.shared.scheduleBackgroundDownloads() }
                     #endif
                 }
         }

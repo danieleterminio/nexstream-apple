@@ -358,7 +358,13 @@ struct GuideView: View {
     private func row(_ c: ChannelEntity, _ gridW: CGFloat) -> some View {
         let list = (c.epgId.flatMap { byEpg[$0] } ?? []).filter { $0.stop > start && $0.start < start + span }
         return HStack(spacing: 0) {
-            CardButton(action: { app.play(c) }, radius: Metrics.u(4)) {
+            CardButton(action: { app.play(c) }, radius: Metrics.u(4), onLong: {
+                let fav = store.favorites.contains(c.streamId)
+                app.menu(c.name, [
+                    NxAction("Guarda \(c.name)", icon: "play.fill") { app.play(c) },
+                    NxAction(fav ? "Togli dai preferiti" : "Aggiungi ai preferiti", icon: fav ? "star.slash" : "star") { app.toggleFavorite(c) },
+                ])
+            }) {
                 VStack(spacing: Metrics.u(3)) {
                     ChannelLogo(channel: c, height: Metrics.tv ? 22 : 20).frame(maxWidth: headW - Metrics.u(14), maxHeight: Metrics.u(26), alignment: .center)
                     if c.num > 0 { Text("\(c.num)").font(NxFont.ui(10, .bold)).foregroundStyle(NxColor.textDim) }

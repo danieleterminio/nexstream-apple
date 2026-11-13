@@ -263,3 +263,45 @@ final class TmdbApi {
         return Dictionary((g.genres ?? []).map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
     }
 }
+
+extension TmdbDetails {
+    /// The episode after S`season` E`episode`: the next one of the same season, or E1 of the next season with episodes
+    /// once the season is over (TMDB's episode counts). Past the last season it stays on the next number.
+    func episodeAfter(_ season: Int, _ episode: Int) -> (Int, Int) {
+        let s = max(1, season)
+        if let cur = seasons.first(where: { $0.seasonNumber == s }), let n = cur.episodeCount, n > 0, episode >= n,
+           let next = seasons.filter({ $0.seasonNumber > s && ($0.episodeCount ?? 0) > 0 }).min(by: { $0.seasonNumber < $1.seasonNumber }) {
+            return (next.seasonNumber, 1)
+        }
+        return (s, episode + 1)
+    }
+
+    /// TMDB ratings come in US codes ("TV-MA", "R"): shown as the age they mean, the Italian way.
+    static func ageLabel(_ c: String?) -> String? {
+        guard let raw = c?.trimmed, !raw.isEmpty else { return nil }
+        switch raw.uppercased() {
+        case "NR", "UNRATED", "NOT RATED": return nil
+        case "G", "TV-G", "TV-Y", "T", "U", "0", "TP": return "Per tutti"
+        case "TV-Y7", "PG", "TV-PG", "6", "7": return "7+"
+        case "PG-13", "TV-14", "12", "13", "14": return "14+"
+        case "R", "16": return "16+"
+        case "NC-17", "TV-MA", "18", "VM18": return "18+"
+        default:
+            if raw.hasSuffix("+") { return raw }
+            return raw.allSatisfy({ $0.isNumber }) ? raw + "+" : nil
+        }
+    }
+
+    /// TMDB leaves some series genres in English.
+    static func genreIt(_ g: String) -> String {
+        switch g {
+        case "Action & Adventure": return "Azione e avventura"
+        case "Sci-Fi & Fantasy": return "Fantascienza e fantasy"
+        case "War & Politics": return "Guerra e politica"
+        case "Kids": return "Bambini"
+        case "News": return "Notizie"
+        case "Talk": return "Talk show"
+        default: return g
+        }
+    }
+}

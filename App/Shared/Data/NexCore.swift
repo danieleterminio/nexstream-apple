@@ -260,7 +260,7 @@ final class NexCore {
         if !d.isTv { return PlayRequest(details: d, startMs: (last != nil && !last!.completed) ? last!.positionMs : 0) }
         guard let l = last else { return PlayRequest(details: d, season: 1, episode: 1) }
         if !l.completed { return PlayRequest(details: d, season: l.season, episode: l.episode, startMs: l.positionMs) }
-        return PlayRequest(details: d, season: l.season, episode: l.episode + 1)
+        let n = d.episodeAfter(l.season, l.episode); return PlayRequest(details: d, season: n.0, episode: n.1)
     }
 
     /// nexstream://open/live/<streamId>?profile=<id> · open/vod/<media>/<tmdbId> · open/programme/<streamId>/<id> ·

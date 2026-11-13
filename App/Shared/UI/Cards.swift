@@ -40,6 +40,7 @@ struct CardButton<Label: View>: View {
             }
         }
         .buttonStyle(NxPlainStyle(scale: 1))
+        .modifier(TvLongMenu(onLong: onLong))
         #else
         Button(action: action, label: label)
             .buttonStyle(NxPlainStyle(scale: 0.96))
@@ -49,6 +50,44 @@ struct CardButton<Label: View>: View {
         #endif
     }
 }
+
+#if os(tvOS)
+/// Apple TV: holding select on a card opens its menu — the same lines the phone shows on a long press, built by the same
+/// code, in the system's long-press menu (the one the focus engine knows how to open).
+private struct TvLongMenu: ViewModifier {
+    let onLong: (() -> Void)?
+    @ObservedObject private var debug = TvLongDemo.shared
+
+    func body(content: Content) -> some View {
+        if let l = onLong {
+            content
+                .contextMenu {
+                    let m = AppModel.shared.captureMenu(l)
+                    if let t = m.title { Text(t) }
+                    ForEach(m.actions) { a in
+                        Button(role: a.destructive ? .destructive : nil, action: a.action) {
+                            if let i = a.icon { Label(a.title, systemImage: i) } else { Text(a.title) }
+                        }
+                    }
+                }
+                .onAppear { debug.offer(l) }
+        } else { content }
+    }
+}
+
+/// Launch argument `-nxLongFirst`: a few seconds after start, the first card with a menu opens it as our own panel, so
+/// the build pipeline can take a picture of what a long press offers (the simulator cannot hold the remote's select).
+@MainActor
+final class TvLongDemo: ObservableObject {
+    static let shared = TvLongDemo()
+    private var done = !Demo.args.contains("-nxLongFirst")
+    func offer(_ open: @escaping () -> Void) {
+        if done { return }
+        done = true
+        Task { try? await Task.sleep(nanoseconds: 9_000_000_000); open() }
+    }
+}
+#endif
 
 /// Our own card for a match: the two crests on the competition's colours, instead of a broadcaster graphic full of text.
 struct MatchArt: View {
@@ -276,13 +315,7 @@ struct PosterCard: View {
         .accessibilityLabel(title.displayTitle)
     }
 
-    private func openMenu() {
-        app.menu(title.displayTitle, [
-            NxAction("Riproduci", icon: "play.fill") { app.playTitle(title) },
-            NxAction("Dettagli", icon: "info.circle") { app.openTitle(title) },
-            NxAction(inList ? "Togli dalla mia lista" : "Aggiungi alla mia lista", icon: inList ? "checkmark" : "plus") { app.toggleList(title) },
-        ])
-    }
+    private func openMenu() { app.menu(title.displayTitle, app.titleActions(title, inList: inList)) }
 }
 
 /// Landscape card of an on-demand title: what was left half way (play on it, the progress under it), coming soon.
@@ -298,10 +331,7 @@ struct LandscapeTitleCard: View {
         let w = Metrics.showCardW * 0.82
         VStack(alignment: .leading, spacing: Metrics.u(6)) {
             CardButton(action: onTap, onFocus: { FocusHub.shared.focus(.vod(title, nil)) }, onLong: {
-                app.menu(title.displayTitle, [
-                    NxAction("Riproduci", icon: "play.fill") { app.playTitle(title) },
-                    NxAction("Dettagli", icon: "info.circle") { app.openTitle(title) },
-                ])
+                app.menu(title.displayTitle, app.titleActions(title, inList: app.store.listKeys.contains(title.key), play: play ? onTap : nil))
             }) {
                 ZStack(alignment: .bottom) {
                     NxImage(url: Img.tmdb(title.backdropPath ?? title.posterPath, "w780"), maxPixel: 800) { NxColor.ink3 }
@@ -373,7 +403,9 @@ struct VodRowView: View {
         CardRow(title: title ?? row.title, sub: sub, tag: tag, items: row.items) { t in
             if row.kind == .continue || row.kind == .landscape {
                 LandscapeTitleCard(title: t, overlay: overlays[t.key], caption: row.kind == .landscape ? t.date : nil, play: row.kind == .continue) {
-                    if row.kind == .continue { app.playTitle(t) } else { app.openTitle(t) }
+                    // "Stavi guardando su…": from the episode and the point the other device reached
+                    if row.id == "other-devices" { app.playOther(t) }
+                    else if row.kind == .continue { app.playTitle(t) } else { app.openTitle(t) }
                 }
             } else {
                 PosterCard(title: t, overlay: overlays[t.key], rank: row.kind == .top10 ? (row.items.firstIndex(of: t).map { $0 + 1 }) : nil, inList: store.listKeys.contains(t.key)) { app.openTitle(t) }

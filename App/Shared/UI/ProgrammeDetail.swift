@@ -7,6 +7,8 @@ final class ProgrammeDetailModel: ObservableObject {
     @Published var link: LiveVodMatcher.Link? = nil
     @Published var replicas: [Showing] = []
     @Published var later: [Showing] = []
+    /// On air now on the other channels, the same kind of thing (films with films, sport with sport…).
+    @Published var similarNow: [Showing] = []
     @Published var busy = false
     private let core = NexCore.shared
     let channelId: String
@@ -36,8 +38,27 @@ final class ProgrammeDetailModel: ObservableObject {
                     return Showing(channel: c, programme: q, meta: qm?.found == true ? qm : nil)
                 }
             }
+            let epgMap = byEpg
+            similarNow = await Task.detached { ProgrammeDetailModel.similarNow(core, c, pp, epgMap, now) }.value
         }
         link = await core.matcher.linkFor(m, p, kids: kids)
+    }
+
+    /// What else is on right now that is like `p`: same kind (and, for the generic kind, same channel genre), with a
+    /// picture, on the viewer's channels (no +1 copies), at most 14.
+    nonisolated static func similarNow(_ core: NexCore, _ c: ChannelEntity, _ p: ProgrammeEntity, _ byEpg: [String: ChannelEntity], _ now: Millis) -> [Showing] {
+        let kind = core.meta.kindOf(p, c)
+        var out = [Showing]()
+        var seen = Set<String>()
+        for r in core.db.programmesAt(now) where r.id != p.id && r.icon != nil {
+            guard let ch = byEpg[r.epgId], ch.shiftMin == 0, ch.streamId != c.streamId, seen.insert(ch.streamId).inserted else { continue }
+            if core.meta.kindOf(r, ch) != kind { continue }
+            if kind == .other && ch.categoryId != c.categoryId { continue }
+            let m = core.meta.get(core.meta.keyOf(r))
+            out.append(Showing(channel: ch, programme: r, meta: m?.found == true ? m : nil))
+            if out.count >= 14 { break }
+        }
+        return out
     }
 
     func watchFromStart() async -> PlayRequest? {
@@ -126,6 +147,11 @@ struct ProgrammeDetailView: View {
         }
         if let l = model.link, l.similar.count >= 4 {
             VodRowView(row: VodRow(id: "similar", title: "Titoli simili", items: l.similar), tag: "On demand")
+        }
+        if !model.similarNow.isEmpty {
+            CardRow(title: "Simili in onda ora", items: model.similarNow) { r in
+                ShowCard(showing: r, style: .compact, favorite: store.favorites.contains(r.channel.streamId)) { app.openShowing(r) }
+            }
         }
     }
 

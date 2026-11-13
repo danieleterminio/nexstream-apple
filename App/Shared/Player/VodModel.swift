@@ -54,6 +54,8 @@ final class VodPlayerModel: ObservableObject {
 
     var details: TmdbDetails { request.details }
     var isOffline: Bool { request.localFile != nil }
+    /// Episodes and the next one can be looked up (a downloaded copy played with the VPN on can).
+    var canBrowse: Bool { !isOffline || Vpn.shared.active.value }
     var subtitle: String {
         let d = request.details
         return d.isTv ? "S\(request.season) E\(request.episode)" + (request.episodeTitle.map { " · \($0)" } ?? "") : (d.year > 0 ? String(d.year) : "")
@@ -125,7 +127,7 @@ final class VodPlayerModel: ObservableObject {
 
     func nextEpisode() async -> PlayRequest? {
         let d = details
-        if !d.isTv || isOffline { return nil }
+        if !d.isTv || !canBrowse { return nil }
         let season = try? await core.catalog.season(d.id, request.season)
         if let same = season?.episodes?.first(where: { $0.episodeNumber == request.episode + 1 }) {
             return PlayRequest(details: d, season: same.seasonNumber, episode: same.episodeNumber, episodeTitle: same.name)
@@ -158,6 +160,20 @@ final class VodPlayerModel: ObservableObject {
     func scrub(to ms: Millis) { seekTarget = ms; lastSeekInput = Clock.now + 60_000 }
     func applySeek() {
         if let t = seekTarget { player.seek(to: t); seekTarget = nil; publishProgress() }
+    }
+    /// "Fonte": another version (server) of the same source, from where it is.
+    func useAlternate(_ alt: Playable) {
+        guard var s = stream, s.channel != "offline", alt.url != s.url else { return }
+        let at = max(lastPos, player.positionMs)
+        s.url = alt.url; s.headers = alt.headerMap; s.kind = alt.kindValue
+        if let l = alt.label, !l.isBlank { s.server = l }
+        NxLog.i("NxPlayer", "version chosen: \(s.server)")
+        open(s, at: at)
+    }
+    /// "Cerca un'altra fonte": a new search, playback goes on from where it is.
+    func otherSource() {
+        lastPos = max(lastPos, player.positionMs)
+        start(retry: true)
     }
     func setSpeed(_ v: Float) { speed = v; player.rate = v; core.settings.setSpeed(pid, v); publishProgress() }
 

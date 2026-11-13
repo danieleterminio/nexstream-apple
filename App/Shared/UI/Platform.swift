@@ -4,6 +4,7 @@ import AVFoundation
 #if os(iOS)
 import UserNotifications
 import Intents
+import BackgroundTasks
 #endif
 
 /// The bits that talk to the system: audio session, screen orientation while a video plays, notifications.
@@ -27,7 +28,76 @@ final class PlatformServices: NSObject, AlertScheduler {
         #endif
         NexCore.shared.reminders.scheduler = self
         NexCore.shared.teams.scheduler = self
+        #if os(iOS)
+        let dl = NexCore.shared.downloads
+        dl.onFinished = { [weak self] row in
+            self?.schedule(id: "dl-\(row.id)", at: Clock.now + 1000, title: "Download completato",
+                           body: "\(row.title)\(row.sub.map { " · \($0)" } ?? "") è pronto da guardare, anche senza rete.", url: "nexstream://open/downloads")
+            Task { @MainActor in AppModel.shared.say("Download completato: \(row.title)") }
+        }
+        dl.onActivity = { [weak self] on in Task { @MainActor in self?.downloadTime(on) } }
+        #endif
     }
+
+    #if os(iOS)
+    // MARK: downloads in the background
+
+    static let downloadsTask = "app.nexstream.one.downloads"
+    private var bgTask: UIBackgroundTaskIdentifier = .invalid
+
+    /// While something downloads, the app asks for the extra time iOS gives when it leaves the screen (about 30 s);
+    /// files keep going in the system's transfer service anyway, HLS segments only while the app runs.
+    private func downloadTime(_ on: Bool) {
+        if on {
+            if bgTask != .invalid { return }
+            bgTask = UIApplication.shared.beginBackgroundTask(withName: "downloads") { [weak self] in
+                NxLog.i("NxDownloads", "background time over")
+                self?.scheduleBackgroundDownloads()
+                self?.downloadTime(false)
+            }
+        } else if bgTask != .invalid {
+            UIApplication.shared.endBackgroundTask(bgTask)
+            bgTask = .invalid
+        }
+    }
+
+    /// Called at launch (before it ends): the job iOS runs when it sees fit (usually charging, at night) to finish downloads.
+    func registerBackgroundDownloads() {
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: PlatformServices.downloadsTask, using: nil) { [weak self] task in
+            guard let t = task as? BGProcessingTask else { task.setTaskCompleted(success: false); return }
+            self?.runBackgroundDownloads(t)
+        }
+    }
+
+    /// The app leaves the screen with downloads still to do: ask iOS for a background run.
+    func scheduleBackgroundDownloads() {
+        let left = NexCore.shared.db.downloads().contains { $0.state == "queued" || $0.state == "running" }
+        guard left else { return }
+        let r = BGProcessingTaskRequest(identifier: PlatformServices.downloadsTask)
+        r.requiresNetworkConnectivity = true
+        r.requiresExternalPower = false
+        do { try BGTaskScheduler.shared.submit(r) } catch { NxLog.w("NxDownloads", "background run not scheduled: \(error)") }
+    }
+
+    private func runBackgroundDownloads(_ task: BGProcessingTask) {
+        NxLog.i("NxDownloads", "background run")
+        let once = Once()
+        let work = Task {
+            NexCore.shared.downloads.wake()
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                let left = NexCore.shared.db.downloads().contains { $0.state == "queued" || $0.state == "running" }
+                if !left { break }
+            }
+            if once.take() { task.setTaskCompleted(success: true) }
+        }
+        task.expirationHandler = { [weak self] in
+            work.cancel()
+            self?.scheduleBackgroundDownloads()
+            if once.take() { task.setTaskCompleted(success: false) }
+        }
+    }
+    #endif
 
     func appBecameActive() {}
 
@@ -119,9 +189,28 @@ extension PlatformServices: UNUserNotificationCenterDelegate {
 final class NxAppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask { PlatformServices.orientations }
 
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        PlatformServices.shared.registerBackgroundDownloads()
+        return true
+    }
+
+    /// iOS woke the app because background file transfers finished: the queue takes them over.
+    func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
+        guard identifier == FileLoader.sessionId else { completionHandler(); return }
+        FileLoader.shared.backgroundCompletion = completionHandler
+        NexCore.shared.downloads.wake()
+    }
+
     /// Siri's "riproduci … su NexStream" is answered inside the app (no extension).
     func application(_ application: UIApplication, handlerFor intent: INIntent) -> Any? {
         intent is INPlayMediaIntent ? PlayMediaHandler() : nil
     }
 }
 #endif
+
+/// True the first time only (thread-safe).
+final class Once: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    func take() -> Bool { lock.lock(); defer { lock.unlock() }; if done { return false }; done = true; return true }
+}
