@@ -36,11 +36,14 @@ final class PageTests: NxUITestCase {
     func testProgrammeFromHomeAndBack() {
         launch(settle: 8)
         wakeFocus()
+        // the first row is "Continua a guardare" in the demo (those cards play straight away): one row down the cards
+        // open their page
+        press(.down, wait: 1.5)
         let card = focusedLabel
         press(.select, wait: 4.0)
         snap("pushed")
         assertAlive("select on '\(card)'")
-        XCTAssertFalse(playerShown, "the first Home card should open its page, not play")
+        XCTAssertFalse(playerShown, "a 'Scelti per te' card should open its page, not play")
         XCTAssertTrue(wait(5) { focused.exists && !focusInside("section.home") }, "select on '\(card)' did not push a page, \(focusInfo)")
         back(wait: 2.0)
         snap("after-back")

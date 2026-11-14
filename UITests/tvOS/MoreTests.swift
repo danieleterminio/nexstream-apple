@@ -136,9 +136,9 @@ final class LivePanelTests: NxUITestCase {
 
 final class VodPanelTests: NxUITestCase {
 
-    private func openVod(_ extra: [String] = []) {
+    private func openVod(_ extra: [String] = [], wait w: Double = 12) {
         launch(["-nxPlayVod", "tv:1396:4:5", "-nxVodTest", NxUITestCase.testStream] + extra, waitFor: "player.surface", timeout: 90, settle: 0)
-        pause(12)
+        pause(w)
         snap("playing")
         assertAlive("opening the player")
     }
@@ -216,8 +216,9 @@ final class VodPanelTests: NxUITestCase {
 
     /// End of an episode with autoplay on: the countdown runs ("Parte tra N secondi").
     func testEndOfEpisodeCountdown() {
-        openVod(["-nxPlayerPanel", "ended"])
-        XCTAssertTrue(labelled("Guarda ora").waitForExistence(timeout: 15), "no end-of-episode screen")
+        // the countdown lasts 10 s: no long wait after the start
+        openVod(["-nxPlayerPanel", "ended"], wait: 0)
+        XCTAssertTrue(labelled("Guarda ora").waitForExistence(timeout: 30), "no end-of-episode screen")
         snap("ended-countdown")
         let countdown = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Parte tra")).firstMatch
         XCTAssertTrue(countdown.exists, "autoplay on: the countdown should be shown")
@@ -225,6 +226,9 @@ final class VodPanelTests: NxUITestCase {
         pause(2.5)
         snap("ended-countdown-later")
         XCTAssertNotEqual(countdown.exists ? countdown.label : "", first, "the countdown should run")
+        // at zero the next episode starts by itself (S4:E6)
+        XCTAssertTrue(wait(14) { !self.labelled("Guarda ora").exists && self.playerShown }, "the next episode should start at the end of the countdown")
+        snap("next-episode")
         assertAlive("countdown")
     }
 }
