@@ -219,6 +219,8 @@ struct BrowsePage<Top: View>: View {
     var emptyTitle = "Nessun canale"
     var emptyText = "Controlla la connessione (VPN) e riprova dalle impostazioni."
     var loadingLabel = "Preparo la tua Home…"
+    /// Apple TV: a button on the empty page, so the focus has somewhere to go (RIGHT from the side menu).
+    var emptyAction: (String, () -> Void)? = nil
     var onEnd: (() -> Void)? = nil
     /// What sits above the hero on the phone (the pills).
     @ViewBuilder var top: () -> Top
@@ -228,7 +230,12 @@ struct BrowsePage<Top: View>: View {
     var body: some View {
         if state.rows.isEmpty && state.carousel.isEmpty {
             if state.loading { BrandLoader(label: app.syncStatus ?? loadingLabel).frame(maxWidth: .infinity, maxHeight: .infinity) }
-            else { VStack(spacing: 0) { top(); StateMessage(icon: "tv", title: emptyTitle, text: emptyText) } }
+            else {
+                VStack(spacing: 0) {
+                    top()
+                    StateMessage(icon: "tv", title: emptyTitle, text: emptyText, actionTitle: Metrics.tv ? emptyAction?.0 : nil, action: emptyAction?.1)
+                }
+            }
         } else {
             #if os(tvOS)
             ZStack(alignment: .topLeading) {
@@ -290,8 +297,9 @@ struct BrowsePage<Top: View>: View {
 }
 
 extension BrowsePage where Top == EmptyView {
-    init(state: HomeState, emptyTitle: String = "Nessun canale", emptyText: String = "Controlla la connessione (VPN) e riprova dalle impostazioni.", loadingLabel: String = "Preparo la tua Home…", onEnd: (() -> Void)? = nil) {
-        self.init(state: state, emptyTitle: emptyTitle, emptyText: emptyText, loadingLabel: loadingLabel, onEnd: onEnd, top: { EmptyView() })
+    init(state: HomeState, emptyTitle: String = "Nessun canale", emptyText: String = "Controlla la connessione (VPN) e riprova dalle impostazioni.", loadingLabel: String = "Preparo la tua Home…",
+         emptyAction: (String, () -> Void)? = nil, onEnd: (() -> Void)? = nil) {
+        self.init(state: state, emptyTitle: emptyTitle, emptyText: emptyText, loadingLabel: loadingLabel, emptyAction: emptyAction, onEnd: onEnd, top: { EmptyView() })
     }
 }
 
@@ -331,7 +339,7 @@ struct HomeView: View {
                 }
             }
             #else
-            BrowsePage(state: state)
+            BrowsePage(state: state, emptyAction: ("Aggiorna ora", { app.core.syncIfNeeded(force: true) }))
             #endif
         }
         .nxPage()
@@ -486,7 +494,7 @@ struct MineView: View {
             #else
             BrowsePage(state: rowsOnly, emptyTitle: "Qui trovi i tuoi contenuti",
                        emptyText: "Aggiungi un titolo alla tua lista, un canale ai preferiti: li ritrovi qui, insieme a ciò che potrebbe piacerti.",
-                       loadingLabel: "Carico i tuoi contenuti…", onEnd: { model.loadMore(store) })
+                       loadingLabel: "Carico i tuoi contenuti…", emptyAction: ("Sfoglia i film", { app.section = .movies }), onEnd: { model.loadMore(store) })
             #endif
         }
         .nxPage()

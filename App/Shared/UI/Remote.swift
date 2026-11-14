@@ -566,6 +566,8 @@ struct RemoteView: View {
                         .padding(.top, Metrics.u(6))
                     }
                 }
+                // always something to focus on, also with no phone paired (BACK works the same)
+                NxButton("Fine", kind: .primary) { app.pop() }.padding(.top, Metrics.u(8))
             }
             .padding(Metrics.u(20))
             .frame(maxWidth: Metrics.u(760), alignment: .leading)

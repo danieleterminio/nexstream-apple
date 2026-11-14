@@ -323,7 +323,7 @@ struct TransferView: View {
         VStack(alignment: .leading, spacing: Metrics.u(6)) {
             Text("OPPURE L'INDIRIZZO").font(NxFont.label).tracking(1).foregroundStyle(NxColor.textDim)
             NxField {
-                TextField("", text: $manual, prompt: Text("192.168.1.50:8765").foregroundColor(NxColor.textDim)).autocorrectionDisabled().textInputAutocapitalization(.never)
+                TextField("", text: $manual, prompt: Text("192.168.1.50:8765").foregroundColor(NxColor.textDim)).autocorrectionDisabled().textInputAutocapitalization(.never).nxFocusMarker()
                     #if os(iOS)
                     .keyboardType(.numbersAndPunctuation)
                     #endif
@@ -333,7 +333,7 @@ struct TransferView: View {
         VStack(alignment: .leading, spacing: Metrics.u(6)) {
             Text("CODICE DI 6 CIFRE").font(NxFont.label).tracking(1).foregroundStyle(NxColor.textDim)
             NxField {
-                TextField("", text: $code, prompt: Text("000 000").foregroundColor(NxColor.textDim))
+                TextField("", text: $code, prompt: Text("000 000").foregroundColor(NxColor.textDim)).nxFocusMarker()
                     #if os(iOS)
                     .keyboardType(.numberPad)
                     #endif

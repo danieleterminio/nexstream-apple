@@ -114,7 +114,8 @@ struct LoginView: View {
     var body: some View {
         GateFrame {
             #if os(tvOS)
-            if phone { PhoneLoginPanel { phone = false }.onExitCommand { phone = false } } else { form }
+            // BACK on the phone panel: back to the form, on the button that opened the panel
+            if phone { PhoneLoginPanel { closePhone() }.onExitCommand { closePhone() } } else { form }
             #else
             form
             #endif
@@ -159,6 +160,7 @@ struct LoginView: View {
                 .padding(.top, Metrics.u(4))
             #if os(tvOS)
             NxButton("Accedi dal telefono", icon: "qrcode", wide: true) { phone = true }
+                .nxFocusKey("login.phone")
             #endif
         }
         .padding(Metrics.u(24))
@@ -166,6 +168,11 @@ struct LoginView: View {
         #if os(tvOS)
         .focusSection()
         #endif
+    }
+
+    private func closePhone() {
+        phone = false
+        FocusMemory.restore("login.phone", after: 0.1)
     }
 
     private func submit() {

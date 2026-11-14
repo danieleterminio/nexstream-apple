@@ -27,17 +27,54 @@ struct NxAction: Identifiable {
     }
 }
 
+/// Where the focus was when a panel opened (Apple TV): it goes back there when the panel closes, as long as the viewer is
+/// still on the same page (a menu line may have opened another page or the player).
+struct FocusOrigin {
+    var key: String?
+    var rail: Bool
+    var section: AppSection
+    var depth: Int
+}
+
 extension AppModel {
     /// Shows a panel with any content. `page`: a full-height one (editors).
     func present<C: View>(_ title: String? = nil, style: NxSheetItem.Style = .panel, @ViewBuilder _ content: () -> C) {
         let v = AnyView(content().environmentObject(self).environmentObject(store))
+        noteOrigin()
         withAnimation(.easeOut(duration: 0.22)) { sheets.append(NxSheetItem(style: style, title: title, content: v)) }
     }
     func dismissSheet() {
         if sheets.isEmpty { return }
+        let o = sheetOrigins.popLast()
         withAnimation(.easeOut(duration: 0.2)) { _ = sheets.removeLast() }
+        restoreFocus(o)
     }
-    func dismissAllSheets() { withAnimation(.easeOut(duration: 0.2)) { sheets = [] } }
+    func dismissAllSheets() {
+        if sheets.isEmpty { return }
+        let o = sheetOrigins.first
+        sheetOrigins = []
+        withAnimation(.easeOut(duration: 0.2)) { sheets = [] }
+        restoreFocus(o)
+    }
+
+    private func noteOrigin() {
+        // one origin per panel, also when the list got out of step
+        if sheetOrigins.count > sheets.count { sheetOrigins.removeLast(sheetOrigins.count - sheets.count) }
+        while sheetOrigins.count < sheets.count { sheetOrigins.append(FocusOrigin(key: nil, rail: false, section: section, depth: -1)) }
+        sheetOrigins.append(FocusOrigin(key: FocusMemory.last, rail: FocusMemory.inRail, section: section, depth: (paths[section] ?? []).count))
+    }
+
+    /// Back to where the focus was before the panel (docs/tv-experience.md §2: "closes it, focus back where it was").
+    private func restoreFocus(_ origin: FocusOrigin?) {
+        #if os(tvOS)
+        guard let o = origin, o.depth >= 0 else { return }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard self.playing == nil, self.section == o.section, (self.paths[o.section] ?? []).count == o.depth else { return }
+            if o.rail { self.railRestore.send(()) } else if let k = o.key { FocusMemory.restore.send(k) }
+        }
+        #endif
+    }
 
     /// A list of things to do with something (what a long press opens).
     func menu(_ title: String?, _ actions: [NxAction]) {
@@ -70,6 +107,7 @@ extension AppModel {
     /// "Resta" is the first choice, so a second BACK or a quick select never leaves by mistake.
     func askExit() {
         if sheets.contains(where: { $0.title == "nx.exit" }) { return }
+        noteOrigin()
         withAnimation(.easeOut(duration: 0.22)) {
             sheets.append(NxSheetItem(style: .dialog, title: "nx.exit", content: AnyView(ExitQuestion().environmentObject(self))))
         }

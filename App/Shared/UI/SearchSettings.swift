@@ -232,6 +232,8 @@ struct SettingRow: View {
             }
         }
         .buttonStyle(NxPlainStyle(scale: 0.99))
+        // a fixed key: the rows are built again when a choice list closes, and the focus goes back on the same row
+        .nxRestorable("settings." + title)
     }
 }
 
@@ -257,7 +259,7 @@ struct TeamsView: View {
                 Text("Le partite delle squadre che segui arrivano in cima alla Home, e ti avviso 10 minuti prima del fischio d'inizio.")
                     .font(NxFont.meta).foregroundStyle(NxColor.textDim).padding(.horizontal, Metrics.gutter)
                 NxField(icon: "magnifyingglass") {
-                    TextField("", text: $query, prompt: Text("Cerca una squadra").foregroundColor(NxColor.textDim)).autocorrectionDisabled()
+                    TextField("", text: $query, prompt: Text("Cerca una squadra").foregroundColor(NxColor.textDim)).autocorrectionDisabled().nxFocusMarker()
                 }
                 .padding(.horizontal, Metrics.gutter)
                 .frame(maxWidth: Metrics.tv ? 800 : .infinity, alignment: .leading)
