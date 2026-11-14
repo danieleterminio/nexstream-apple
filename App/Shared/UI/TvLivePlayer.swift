@@ -950,6 +950,8 @@ struct TvGuidePanel: View {
                 }
                 .padding(.vertical, 14).padding(.horizontal, 4)
             }
+            // the cards past the right edge fade out instead of being cut
+            .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.94), .init(color: .clear, location: 1)], startPoint: .leading, endPoint: .trailing))
             .focusSection()
             .onChange(of: focus) { _, f in
                 if let f = f { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(f, anchor: f < 2 ? .leading : .center) } }

@@ -270,7 +270,7 @@ final class NavigationExtraTests: NxUITestCase {
 
     /// Play/pause on the first Home card (a programme on now) plays its channel at once; BACK returns to the card.
     func testPlayPauseOnCardPlaysAndBackRestoresFocus() {
-        launch(["-nxLiveTest", NxUITestCase.testStream, "-nxDemoEpg"], settle: 8)
+        launch(["-nxLiveTest", NxUITestCase.testStream, "-nxVodTest", NxUITestCase.testStream, "-nxDemoEpg"], settle: 8)
         XCTAssertTrue(wait(4) { self.focused.exists && !self.railFocused }, "no focus in the page, \(focusInfo)")
         let card = focusedLabel
         press(.playPause, wait: 3.0)

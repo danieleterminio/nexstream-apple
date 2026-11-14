@@ -84,6 +84,8 @@ final class RailTests: NxUITestCase {
     func testBackOnRailShowsExitDialogAndRestaCloses() {
         launch()
         XCTAssertTrue(openRailWithLeft(), "LEFT never reached the rail, \(focusInfo)")
+        // from an entry other than the section in view: Resta must come back to that same entry
+        XCTAssertTrue(moveRail(to: "guide"), "could not walk the rail to guide, \(focusInfo)")
         back()
         snap("exit-dialog")
         assertAlive("BACK on the rail")
@@ -96,7 +98,7 @@ final class RailTests: NxUITestCase {
         snap("after-resta")
         assertAlive("select on Resta")
         XCTAssertTrue(waitGone(text("Vuoi uscire da NexStream?"), 4), "the exit question is still shown after Resta")
-        XCTAssertTrue(wait(3) { railFocused }, "after Resta the focus should be back on the rail, \(focusInfo)")
+        XCTAssertTrue(waitFocus("rail.guide", 3), "after Resta the focus should be back on the rail entry it came from, \(focusInfo)")
     }
 
     /// A second BACK on the exit dialog means Resta: the dialog closes and the app stays.
@@ -109,7 +111,7 @@ final class RailTests: NxUITestCase {
         snap("after-second-back")
         assertAlive("second BACK on the exit dialog")
         XCTAssertTrue(waitGone(text("Vuoi uscire da NexStream?"), 4), "the exit question is still shown after the second BACK")
-        XCTAssertTrue(wait(3) { railFocused }, "the focus should be back on the rail, \(focusInfo)")
+        XCTAssertTrue(waitFocus("rail.home", 3), "the focus should be back on the rail entry it came from, \(focusInfo)")
     }
 
     /// A long BACK chain from a page never leaves the app without the exit question.

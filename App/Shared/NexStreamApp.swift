@@ -54,6 +54,7 @@ struct RootView: View {
                 #endif
             if playerShown {
                 PlayerScreen()
+                    .accessibilityElement(children: .contain).accessibilityIdentifier("player.screen")
                     .disabled(!app.sheets.isEmpty)
                     .transition(.move(edge: .bottom))
                     .zIndex(1)
