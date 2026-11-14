@@ -10,6 +10,8 @@ struct MainView: View {
     @State private var visited: Set<AppSection> = []
     #if os(tvOS)
     @FocusState private var rail: RailFocus?
+    @Namespace private var pageScope
+    @Environment(\.resetFocus) private var resetFocus
     /// The side menu can be reached only a moment after the page settles: so the focus starts in the page, and
     /// choosing a section moves it into that section.
     @State private var railReady = false
@@ -54,11 +56,7 @@ struct MainView: View {
         .onChange(of: rail) { old, new in railMoved(old, new) }
         .onChange(of: app.paths) { old, new in pathsChanged(old, new) }
         .onReceive(app.railRestore) { _ in backToRail() }
-        .task(id: railPulse) {
-            railReady = false
-            try? await Task.sleep(nanoseconds: 900_000_000)
-            if !Task.isCancelled { railReady = true }
-        }
+        .task(id: railPulse) { await settle() }
         .task { await demoRail() }
         .task { await demoFocusTest() }
         #endif
@@ -121,6 +119,7 @@ struct MainView: View {
         }
         #if os(tvOS)
         .padding(.leading, Metrics.rail)
+        .focusScope(pageScope)
         // one block for the focus engine: RIGHT from any entry of the side menu lands in the page, also where the top
         // of the page is the billboard (nothing to focus at the height of the menu entry)
         .focusSection()
@@ -141,6 +140,21 @@ struct MainView: View {
         app.reselect += 1
         pulse()
         if wasRoot { backToPage() }
+    }
+
+    /// After a page change the focus must start in the page, not in the side menu. The menu stays out of reach until the
+    /// page has the focus; while nothing has it (a page still loading when the system looked for something to focus),
+    /// the page is asked again for its first element. After 15 s the menu opens up anyway.
+    private func settle() async {
+        railReady = false
+        try? await Task.sleep(nanoseconds: 900_000_000)
+        var waited = 0
+        while !Task.isCancelled && waited < 50 && rail == nil && FocusMemory.current == nil {
+            resetFocus(in: pageScope)
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            waited += 1
+        }
+        if !Task.isCancelled { railReady = true }
     }
 
     /// BACK on a section's first page: the focus goes to the side menu, on that section.

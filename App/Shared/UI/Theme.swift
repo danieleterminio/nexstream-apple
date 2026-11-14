@@ -127,12 +127,14 @@ extension View {
 struct Focusable<Content: View>: View {
     @Environment(\.isFocused) private var focused
     @Environment(\.nxRestoreKey) private var restoreKey
+    @State private var fid = UUID().uuidString
     var onFocus: (() -> Void)? = nil
     @ViewBuilder let content: (Bool) -> Content
     var body: some View {
         #if os(tvOS)
         content(focused).onChange(of: focused) { _, f in
-            if f { FocusMemory.noteFocus(restoreKey); onFocus?() }
+            if f { FocusMemory.noteFocus(restoreKey); FocusMemory.current = fid; onFocus?() }
+            else if FocusMemory.current == fid { FocusMemory.current = nil }
         }
         #else
         content(false)
@@ -152,6 +154,8 @@ enum FocusMemory {
     private(set) static var last: String? = nil
     /// The focus is in the side menu.
     static var inRail = false
+    /// Something drawn with `Focusable` has the focus now (nil: nothing of the pages and panels has it).
+    static var current: String? = nil
     static let restore = PassthroughSubject<String, Never>()
 
     static func noteFocus(_ key: String?) { last = key; inRail = false }
