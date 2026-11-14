@@ -116,8 +116,9 @@ struct HeroCarousel: View {
     @State private var width: CGFloat = 390
 
     var body: some View {
-        let cardW = Metrics.isPad ? min(width - 80, 760) : min(width - 36, 420)
-        let ratio: CGFloat = Metrics.isPad ? 0.62 : 1.36
+        // iPad: the card fills the width (no empty strip beside the first card), with the wide artwork
+        let cardW = Metrics.isPad ? width - 2 * Metrics.gutter : min(width - 36, 420)
+        let ratio: CGFloat = Metrics.isPad ? 0.5 : 1.36
         VStack(spacing: 8) {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 10) {

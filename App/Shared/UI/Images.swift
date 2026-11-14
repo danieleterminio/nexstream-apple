@@ -119,14 +119,27 @@ struct ChannelLogo: View {
     var height: CGFloat = 22
     var body: some View {
         let h = Metrics.u(height)
+        // a logo that does not load (or is still loading) falls back to the next one, then to the name: never an empty tile
         if let logo = channel.logo {
-            NxImage(logo, fit: true, maxPixel: 320, alignment: .leading).frame(maxWidth: h * 3.2, maxHeight: h, alignment: .leading)
-        } else if let icon = channel.icon {
-            NxImage(icon, fit: true, maxPixel: 320, alignment: .leading).frame(maxWidth: h * 3, maxHeight: h - Metrics.u(4), alignment: .leading)
+            NxImage(url: logo, fit: true, maxPixel: 320, alignment: .leading) { iconOrName(h) }
+                .frame(maxWidth: h * 3.2, maxHeight: h, alignment: .leading)
+        } else {
+            iconOrName(h)
+        }
+    }
+
+    @ViewBuilder private func iconOrName(_ h: CGFloat) -> some View {
+        if let icon = channel.icon, icon != channel.logo {
+            NxImage(url: icon, fit: true, maxPixel: 320, alignment: .leading) { name }
+                .frame(maxWidth: h * 3, maxHeight: h - Metrics.u(4), alignment: .leading)
                 .padding(.horizontal, Metrics.u(6)).padding(.vertical, Metrics.u(3))
                 .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: Metrics.u(6), style: .continuous))
         } else {
-            Text(channel.name.uppercased()).font(NxFont.label).tracking(0.8).foregroundStyle(NxColor.text).lineLimit(1)
+            name
         }
+    }
+
+    private var name: some View {
+        Text(channel.name.uppercased()).font(NxFont.label).tracking(0.8).foregroundStyle(NxColor.text).lineLimit(2).minimumScaleFactor(0.7)
     }
 }
