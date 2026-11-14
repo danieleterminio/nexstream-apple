@@ -13,6 +13,9 @@ final class PageTests: NxUITestCase {
     private func openTitleAndBack(_ s: String, extra: [String]) {
         launch(extra, waitFor: "rail.\(s)", settle: 8)
         XCTAssertFalse(railFocused, "the focus should start in the page, \(focusInfo)")
+        // the page sometimes starts with nothing focused (then BACK would leave the app): a move wakes the focus up.
+        // That bug is covered by RailTests.testBackOnSectionRootFocusesRail; here it must not hide the BACK chain.
+        if !wait(3, { focused.exists }) { snap("no-focus-at-start"); press(.down, wait: 1.0) }
         var card = ""
         var opened = false
         var tried = [String]()
@@ -24,9 +27,10 @@ final class PageTests: NxUITestCase {
             if el("page.title").waitForExistence(timeout: 6) { opened = true; break }
             snap("not-a-title-\(row)")
             // something else opened (player, programme or genre page): close it; if nothing opened, just go on
-            if playerShown { _ = closePlayerWithBack() } else if !focusInside("section.\(s)") { back(wait: 2.0) }
+            if playerShown { _ = closePlayerWithBack() } else if focused.exists && !focusInside("section.\(s)") { back(wait: 2.0) }
             assertAlive("closing what '\(card)' opened")
             if railFocused { press(.right, wait: 1.0) }
+            if !focused.exists { press(.up, wait: 1.0) }
             press(.down, wait: 1.2)
         }
         snap("title-page")
