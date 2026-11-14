@@ -56,6 +56,18 @@ struct PlayerScreen: View {
     }
 }
 
+extension View {
+    /// Apple TV: ties a button of a player screen (resolving, failed, ended…) to the screen's focus state, so the screen
+    /// can put the focus on it; on the phone it changes nothing.
+    @ViewBuilder func tvPhaseFocus(_ binding: FocusState<Int?>.Binding, _ value: Int) -> some View {
+        #if os(tvOS)
+        focused(binding, equals: value)
+        #else
+        self
+        #endif
+    }
+}
+
 /// A bare symbol over the video (no disc behind it): the transport keys and the corners of the player.
 struct PlayerKey: View {
     let icon: String
