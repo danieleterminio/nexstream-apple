@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import Combine
 
 extension Color {
     init(hex: UInt32, alpha: Double = 1) {
@@ -80,8 +81,10 @@ enum Metrics {
     static let rowGap: CGFloat = 34
     static let cardGap: CGFloat = 24
     static let radius: CGFloat = 10
-    /// Room the collapsed side menu takes on the left of every page.
-    static let rail: CGFloat = 120
+    /// Room the collapsed side menu takes on the left of every page (docs/tv-experience.md §1: 84 dp / 168 pt).
+    static let rail: CGFloat = 168
+    /// The side menu with the focus in it, drawn over the page.
+    static let railOpen: CGFloat = 600
     #else
     static let tv = false
     static let type: CGFloat = 1.0
@@ -123,15 +126,82 @@ extension View {
 /// Gives a view the focus state of the button around it (Apple TV). On a phone it is always false.
 struct Focusable<Content: View>: View {
     @Environment(\.isFocused) private var focused
+    @Environment(\.nxRestoreKey) private var restoreKey
     var onFocus: (() -> Void)? = nil
     @ViewBuilder let content: (Bool) -> Content
     var body: some View {
         #if os(tvOS)
-        content(focused).onChange(of: focused) { _, f in if f { onFocus?() } }
+        content(focused).onChange(of: focused) { _, f in
+            if f { FocusMemory.noteFocus(restoreKey); onFocus?() }
+        }
         #else
         content(false)
         #endif
     }
+}
+
+// ---------------------------------------------------------------------------------------------------------------- focus memory
+
+/// Apple TV: where the focus was, so it can go back there — on the card that opened a page once the page is closed,
+/// on the button that opened a panel once the panel is closed, on the page's last card when RIGHT leaves the side menu
+/// (docs/tv-experience.md §2). Every button that can take the focus back (`nxRestorable`) has a key; the focus engine
+/// itself does not offer this for our own panels, which are views drawn on top and not system presentations.
+@MainActor
+enum FocusMemory {
+    /// Key of the last focused element outside the side menu (nil: one that cannot be focused again from code).
+    private(set) static var last: String? = nil
+    /// The focus is in the side menu.
+    static var inRail = false
+    static let restore = PassthroughSubject<String, Never>()
+
+    static func noteFocus(_ key: String?) { last = key; inRail = false }
+    /// Puts the focus back on the element with that key, if it is still on screen, after `delay` seconds (the time for
+    /// a panel to go or a page to slide back).
+    static func restore(_ key: String?, after delay: Double = 0.1) {
+        guard let k = key else { return }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            restore.send(k)
+        }
+    }
+}
+
+private struct NxRestoreKeyKey: EnvironmentKey { static let defaultValue: String? = nil }
+private struct NxFocusKeyKey: EnvironmentKey { static let defaultValue: String? = nil }
+extension EnvironmentValues {
+    /// The key of the restorable button around a label (read by `Focusable`).
+    var nxRestoreKey: String? { get { self[NxRestoreKeyKey.self] } set { self[NxRestoreKeyKey.self] = newValue } }
+    /// A fixed key asked from outside for the one restorable button inside (`nxFocusKey`).
+    var nxFocusKey: String? { get { self[NxFocusKeyKey.self] } set { self[NxFocusKeyKey.self] = newValue } }
+}
+
+/// A button that `FocusMemory` can give the focus back to.
+private struct NxRestorable: ViewModifier {
+    var key: String? = nil
+    @Environment(\.nxFocusKey) private var asked
+    @State private var token = UUID().uuidString
+    #if os(tvOS)
+    @FocusState private var focused: Bool
+    #endif
+
+    func body(content: Content) -> some View {
+        #if os(tvOS)
+        let k: String = asked ?? key ?? token
+        content
+            .environment(\.nxRestoreKey, k)
+            .focused($focused)
+            .onReceive(FocusMemory.restore) { t in if t == k { focused = true } }
+        #else
+        content
+        #endif
+    }
+}
+
+extension View {
+    /// Lets the focus come back to this button (Apple TV); `key`: a fixed name, for views that are built again.
+    func nxRestorable(_ key: String? = nil) -> some View { modifier(NxRestorable(key: key)) }
+    /// Gives the restorable button inside a fixed name.
+    func nxFocusKey(_ key: String) -> some View { environment(\.nxFocusKey, key) }
 }
 
 /// Every button of the app goes through this: no system chrome, a soft press on touch.
@@ -180,6 +250,7 @@ struct NxButton: View {
             }
         }
         .buttonStyle(NxPlainStyle())
+        .nxRestorable()
         .opacity(enabled ? 1 : 0.4)
     }
 }
@@ -231,6 +302,7 @@ struct NxIconAction: View {
             }
         }
         .buttonStyle(NxPlainStyle(scale: 0.92))
+        .nxRestorable()
     }
 }
 
@@ -300,6 +372,7 @@ struct NxChip: View {
             }
         }
         .buttonStyle(NxPlainStyle())
+        .nxRestorable()
     }
 }
 

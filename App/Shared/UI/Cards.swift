@@ -26,21 +26,26 @@ struct CardButton<Label: View>: View {
     var radius: CGFloat = Metrics.radius
     var onFocus: (() -> Void)? = nil
     var onLong: (() -> Void)? = nil
+    /// Apple TV: the play/pause key on the card plays it straight away (something playable).
+    var onPlay: (() -> Void)? = nil
     @ViewBuilder var label: () -> Label
 
     var body: some View {
         #if os(tvOS)
         Button(action: action) {
             Focusable(onFocus: onFocus) { focused in
+                // docs/tv-experience.md §2: scale 1.06, a 6 pt white frame, a slight shadow
                 label()
-                    .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(Color.white, lineWidth: focused ? 5 : 0))
-                    .scaleEffect(focused ? 1.07 : 1)
-                    .shadow(color: .black.opacity(focused ? 0.6 : 0), radius: 18, y: 10)
+                    .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(Color.white, lineWidth: focused ? 6 : 0))
+                    .scaleEffect(focused ? 1.06 : 1)
+                    .shadow(color: .black.opacity(focused ? 0.55 : 0), radius: 16, y: 8)
                     .animation(.easeOut(duration: 0.16), value: focused)
             }
         }
         .buttonStyle(NxPlainStyle(scale: 1))
         .modifier(TvLongMenu(onLong: onLong))
+        .onPlayPauseCommand(perform: onPlay)
+        .nxRestorable()
         #else
         Button(action: action, label: label)
             .buttonStyle(NxPlainStyle(scale: 0.96))
@@ -176,7 +181,8 @@ struct ShowCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Metrics.u(6)) {
-            CardButton(action: onTap, onFocus: { FocusHub.shared.focus(.live(showing)) }, onLong: { menu() }) {
+            CardButton(action: onTap, onFocus: { FocusHub.shared.focus(.live(showing)) }, onLong: { menu() },
+                       onPlay: showing.isLive() || showing.programme == nil ? { app.play(showing.channel) } : nil) {
                 ZStack(alignment: .bottomLeading) {
                     ShowingArt(showing: showing)
                     NxColor.cardFade.opacity(0.7)
@@ -227,7 +233,7 @@ struct ChannelCard: View {
     var body: some View {
         let w = width
         VStack(alignment: .leading, spacing: Metrics.u(6)) {
-            CardButton(action: onTap, onFocus: { FocusHub.shared.focus(.live(showing)) }, onLong: { menu() }) {
+            CardButton(action: onTap, onFocus: { FocusHub.shared.focus(.live(showing)) }, onLong: { menu() }, onPlay: onTap) {
                 ZStack(alignment: .bottomLeading) {
                     ShowingArt(showing: showing)
                     NxColor.cardFade.opacity(0.7)
@@ -288,7 +294,8 @@ struct PosterCard: View {
                     .padding(.bottom, -width * 0.14)
                     .allowsHitTesting(false)
             }
-            CardButton(action: onTap, onFocus: { FocusHub.shared.focus(.vod(title, nil)) }, onLong: menu ? { openMenu() } : nil) {
+            CardButton(action: onTap, onFocus: { FocusHub.shared.focus(.vod(title, nil)) }, onLong: menu ? { openMenu() } : nil,
+                       onPlay: menu ? { app.playTitle(title) } : nil) {
                 ZStack(alignment: .bottomLeading) {
                     NxImage(url: Img.tmdb(title.posterPath, "w342"), maxPixel: 500) {
                         ZStack {
@@ -332,7 +339,7 @@ struct LandscapeTitleCard: View {
         VStack(alignment: .leading, spacing: Metrics.u(6)) {
             CardButton(action: onTap, onFocus: { FocusHub.shared.focus(.vod(title, nil)) }, onLong: {
                 app.menu(title.displayTitle, app.titleActions(title, inList: app.store.listKeys.contains(title.key), play: play ? onTap : nil))
-            }) {
+            }, onPlay: play ? onTap : { app.playTitle(title) }) {
                 ZStack(alignment: .bottom) {
                     NxImage(url: Img.tmdb(title.backdropPath ?? title.posterPath, "w780"), maxPixel: 800) { NxColor.ink3 }
                     if play {

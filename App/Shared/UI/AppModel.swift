@@ -12,7 +12,7 @@ enum AppSection: String, CaseIterable, Hashable, Identifiable {
         case .guide: return "Guida TV"
         case .movies: return "Film"
         case .series: return "Serie TV"
-        case .mine: return Metrics.tv ? "La mia lista" : "Il mio spazio"
+        case .mine: return Metrics.tv ? "I miei" : "Il mio spazio"
         case .settings: return "Impostazioni"
         }
     }
@@ -24,7 +24,7 @@ enum AppSection: String, CaseIterable, Hashable, Identifiable {
         case .guide: return "calendar"
         case .movies: return "film.fill"
         case .series: return "tv.fill"
-        case .mine: return "plus"
+        case .mine: return Metrics.tv ? "bookmark.fill" : "plus"
         case .settings: return "gearshape.fill"
         }
     }
@@ -114,6 +114,10 @@ final class AppModel: ObservableObject {
     @Published var liveTab: Int = UserDefaults.standard.integer(forKey: "nx.liveTab") { didSet { UserDefaults.standard.set(liveTab, forKey: "nx.liveTab") } }
     /// Our own panels (menus, pickers, dialogs, editors), the last one on top.
     @Published var sheets: [NxSheetItem] = []
+    /// Where the focus was when each panel opened (same order as `sheets`).
+    var sheetOrigins: [FocusOrigin] = []
+    /// Apple TV: a panel opened from the side menu closed, the focus goes back to the menu.
+    let railRestore = PassthroughSubject<Void, Never>()
     /// Set while `captureMenu` runs: `menu` hands its lines over instead of presenting them.
     var menuCapture: ((String?, [NxAction]) -> Void)? = nil
     @Published var pendingSearch: String? = nil
@@ -184,7 +188,13 @@ final class AppModel: ObservableObject {
             case "transfer": paths[section] = [.transfer]
             case "remote": paths[section] = [.remote]
             case "downloads": paths[section] = [.downloads]
-            default: break
+            case "profiles": paths[section] = [.manageProfiles]
+            default:
+                // "title:movie:603", "genre:tv:18:Dramma", "programme:1005:0" (0 = the page of what is on now)
+                let p: [String] = r.split(separator: ":").map(String.init)
+                if p.count == 3, p[0] == "title", let id = Int(p[2]) { paths[section] = [.title(p[1], id)] }
+                else if p.count == 4, p[0] == "genre", let id = Int(p[2]) { paths[section] = [.genre(p[1], id, p[3])] }
+                else if p.count == 3, p[0] == "programme", let id = Int64(p[2]) { paths[section] = [.programme(p[1], id)] }
             }
         }
         // the pages the VPN gate opens (screenshots of the gate with -nxVpnOff)

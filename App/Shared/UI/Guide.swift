@@ -364,7 +364,7 @@ struct GuideView: View {
                     NxAction("Guarda \(c.name)", icon: "play.fill") { app.play(c) },
                     NxAction(fav ? "Togli dai preferiti" : "Aggiungi ai preferiti", icon: fav ? "star.slash" : "star") { app.toggleFavorite(c) },
                 ])
-            }) {
+            }, onPlay: { app.play(c) }) {
                 VStack(spacing: Metrics.u(3)) {
                     ChannelLogo(channel: c, height: Metrics.tv ? 22 : 20).frame(maxWidth: headW - Metrics.u(14), maxHeight: Metrics.u(26), alignment: .center)
                     if c.num > 0 { Text("\(c.num)").font(NxFont.ui(10, .bold)).foregroundStyle(NxColor.textDim) }
@@ -375,7 +375,7 @@ struct GuideView: View {
             .padding(.trailing, gap)
             ZStack(alignment: .topLeading) {
                 if list.isEmpty {
-                    cell(title: c.event ?? "Nessuna informazione", sub: c.eventStart.map { TimeText.time($0) } ?? c.eventSub, width: gridW, onAir: c.event != nil, past: false, progress: nil, action: { app.play(c) }, long: nil)
+                    cell(title: c.event ?? "Nessuna informazione", sub: c.eventStart.map { TimeText.time($0) } ?? c.eventSub, width: gridW, onAir: c.event != nil, past: false, progress: nil, action: { app.play(c) }, long: nil, play: { app.play(c) })
                 }
                 ForEach(list) { p in
                     let x0 = x(p.start, gridW), x1 = x(p.stop, gridW)
@@ -389,7 +389,7 @@ struct GuideView: View {
                              if onAir { a.insert(NxAction("Guarda \(c.name)", icon: "play.fill") { app.play(c) }, at: 0) }
                              if p.start > now { a.append(NxAction(store.reminders.contains(c.streamId) ? "Togli il promemoria" : "Avvisami quando inizia", icon: "bell") { app.toggleReminder(s) }) }
                              app.menu(s.cardTitle, a)
-                         })
+                         }, play: onAir ? { app.play(c) } : nil)
                         .offset(x: x0)
                 }
                 if isNow { Rectangle().fill(NxColor.accent).frame(width: Metrics.u(1.5), height: rowH).offset(x: x(now, gridW)).allowsHitTesting(false) }
@@ -401,8 +401,8 @@ struct GuideView: View {
         #endif
     }
 
-    private func cell(title: String, sub: String?, width: CGFloat, onAir: Bool, past: Bool, progress: Double?, action: @escaping () -> Void, long: (() -> Void)?) -> some View {
-        CardButton(action: action, radius: Metrics.u(4), onLong: long) {
+    private func cell(title: String, sub: String?, width: CGFloat, onAir: Bool, past: Bool, progress: Double?, action: @escaping () -> Void, long: (() -> Void)?, play: (() -> Void)?) -> some View {
+        CardButton(action: action, radius: Metrics.u(4), onLong: long, onPlay: play) {
             ZStack(alignment: .bottomLeading) {
                 (onAir ? NxColor.ink4 : NxColor.ink2)
                 if width > Metrics.u(40) {

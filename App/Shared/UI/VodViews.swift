@@ -162,7 +162,8 @@ struct VodHomeView: View {
             }
             #else
             BrowsePage(state: vodOnly, emptyTitle: "Niente da mostrare", emptyText: "Controlla la connessione e riprova.",
-                       loadingLabel: media == "tv" ? "Carico le serie TV…" : "Carico i film…", onEnd: { model.loadMore() }) { genres }
+                       loadingLabel: media == "tv" ? "Carico le serie TV…" : "Carico i film…", emptyAction: ("Vai alla Home", { app.section = .home }),
+                       onEnd: { model.loadMore() }) { genres }
             #endif
         }
         .nxPage()
@@ -208,7 +209,7 @@ struct GenreView: View {
     var body: some View {
         Group {
             if let r = rows {
-                if r.isEmpty { StateMessage(icon: "film", title: "Niente in questo genere", text: "Riprova più tardi.") }
+                if r.isEmpty { StateMessage(icon: "film", title: "Niente in questo genere", text: "Riprova più tardi.", actionTitle: Metrics.tv ? "Indietro" : nil) { app.pop() } }
                 else {
                     ScrollView(.vertical, showsIndicators: false) {
                         LazyVStack(alignment: .leading, spacing: Metrics.rowGap) {
@@ -589,7 +590,7 @@ struct TitleDetailView: View {
     private func episodeCard(_ d: TmdbDetails, _ e: TmdbEpisode) -> some View {
         let w = Metrics.showCardW * 0.9
         return VStack(alignment: .leading, spacing: 10) {
-            CardButton(action: { app.play(request(d, e)) }, onLong: { episodeMenu(d, e) }) { still(e, w) }
+            CardButton(action: { app.play(request(d, e)) }, onLong: { episodeMenu(d, e) }, onPlay: { app.play(request(d, e)) }) { still(e, w) }
             Text("\(e.episodeNumber). \(e.name ?? "Episodio \(e.episodeNumber)")").font(NxFont.ui(13, .bold)).foregroundStyle(NxColor.text).lineLimit(1)
             Text(e.overview ?? " ").font(NxFont.ui(11, .medium)).foregroundStyle(NxColor.textDim).lineLimit(3)
         }

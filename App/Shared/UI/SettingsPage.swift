@@ -177,7 +177,15 @@ private struct SettingsSplit: View {
     @Binding var choice: SettingsChoice?
     @EnvironmentObject var app: AppModel
     @FocusState private var category: SettingsCategory?
+    /// The current value of a choice list takes the focus when the list opens.
     @FocusState private var firstRow: Bool
+    /// The row that opened the choice list: picking a value or BACK puts the focus back on it.
+    @State private var returnKey: String? = nil
+
+    private func backToRow() {
+        FocusMemory.restore(returnKey ?? SettingsRows.firstKey, after: 0.05)
+        returnKey = nil
+    }
 
     private var leftWidth: CGFloat { Metrics.tv ? 470 : 300 }
 
@@ -195,7 +203,7 @@ private struct SettingsSplit: View {
                 .focusSection()
                 // BACK: a choice → its rows; the rows → the categories (from there the side menu)
                 .onExitCommand {
-                    if choice != nil { choice = nil; firstRow = true } else { category = selected }
+                    if choice != nil { choice = nil; backToRow() } else { category = selected }
                 }
                 #endif
         }
@@ -216,9 +224,8 @@ private struct SettingsSplit: View {
             ForEach(SettingsCategory.allCases) { c in
                 Button {
                     selected = c; choice = nil
-                    #if os(tvOS)
-                    firstRow = true
-                    #endif
+                    // select (like RIGHT) goes into the rows, on the first one
+                    FocusMemory.restore(SettingsRows.firstKey, after: 0.05)
                 } label: {
                     Focusable { focused in
                         let on = c == selected
@@ -260,11 +267,11 @@ private struct SettingsSplit: View {
                         Text(c.title).font(Metrics.tv ? NxFont.titleL : NxFont.titleM).foregroundStyle(NxColor.text).lineLimit(2)
                     }
                     .padding(.horizontal, Metrics.u(16)).padding(.bottom, Metrics.u(6))
-                    SettingsChoiceList(choice: c, first: $firstRow) { choice = nil; firstRow = true }
+                    SettingsChoiceList(choice: c, first: $firstRow) { choice = nil; backToRow() }
                 } else {
                     Text(selected.title).font(Metrics.tv ? NxFont.titleL : NxFont.titleM).foregroundStyle(NxColor.text)
                         .padding(.horizontal, Metrics.u(16)).padding(.bottom, Metrics.u(10))
-                    SettingsRows(category: selected, state: state, first: $firstRow) { c in choice = c; firstRow = true }
+                    SettingsRows(category: selected, state: state) { c in returnKey = FocusMemory.last; choice = c; firstRow = true }
                         .id("\(selected.rawValue)-\(state.rev)")
                 }
                 Color.clear.frame(height: 60)
@@ -307,9 +314,11 @@ private struct FirstFocus: ViewModifier {
 // MARK: - the rows of each category (same texts on every device and on Android)
 
 private struct SettingsRows: View {
+    /// Focus key of the first row of a category (Apple TV): where select / RIGHT on a category lands.
+    static let firstKey = "settings.first"
+
     let category: SettingsCategory
     @ObservedObject var state: SettingsState
-    var first: FocusState<Bool>.Binding? = nil
     let choose: (SettingsChoice) -> Void
     @EnvironmentObject var app: AppModel
     #if os(tvOS)
@@ -344,7 +353,7 @@ private struct SettingsRows: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, Metrics.u(Metrics.tv ? 16 : 14)).padding(.vertical, Metrics.u(10))
-            SettingRow(icon: "person.2.fill", title: "Cambia profilo") { app.changeProfile() }.modifier(FirstFocus(binding: first))
+            SettingRow(icon: "person.2.fill", title: "Cambia profilo") { app.changeProfile() }.nxFocusKey(SettingsRows.firstKey)
             // a kids profile cannot reach the profiles (and with them maturity and PINs)
             if !p.kids {
                 SettingRow(icon: "person.crop.circle.badge.plus", title: "Gestisci profili", sub: "Nome, avatar, PIN e profili per bambini") { app.open(.manageProfiles) }
@@ -358,7 +367,7 @@ private struct SettingsRows: View {
         SettingRow(icon: "forward.end.fill", title: "Episodio successivo automatico", sub: "Alla fine di un episodio parte il seguente.", on: core.settings.autoplay(pid)) {
             core.settings.setAutoplay(pid, !core.settings.autoplay(pid))
         }
-        .modifier(FirstFocus(binding: first))
+        .nxFocusKey(SettingsRows.firstKey)
         SettingRow(icon: "text.line.last.and.arrowtriangle.forward", title: "Proponi il prossimo sui titoli di coda", sub: "Nell'ultimo minuto compare “Prossimo episodio”.", on: core.settings.creditsPrompt(pid)) {
             core.settings.setCreditsPrompt(pid, !core.settings.creditsPrompt(pid))
         }
@@ -384,7 +393,7 @@ private struct SettingsRows: View {
         SettingRow(icon: "4k.tv", title: "Qualità video", sub: "La versione di ogni canale che parte per prima; se non risponde passo da solo a un'altra.", value: Prefs.qualities.first { $0.0 == prefs.quality }?.1, chevron: !Metrics.tv) {
             choose(.of("Qualità video", note: "La versione di ogni canale che parte per prima; se non risponde passo da solo a un'altra.", Prefs.qualities, current: prefs.quality) { v in core.prefs.update { $0.quality = v } })
         }
-        .modifier(FirstFocus(binding: first))
+        .nxFocusKey(SettingsRows.firstKey)
         SettingRow(icon: "cpu", title: "Usa le versioni HEVC", sub: "Stessa immagine con meno dati. Spegnilo se qualche canale resta nero.", on: prefs.hevc) { core.prefs.update { $0.hevc.toggle() } }
         SettingRow(icon: "captions.bubble", title: "Sottotitoli", sub: "Quando il canale li trasmette.", value: prefs.preferredText.isEmpty ? "Spenti" : "Italiano", chevron: !Metrics.tv) {
             choose(.of("Sottotitoli", note: "Quando il canale li trasmette.", [("", "Spenti"), ("it", "Italiano")], current: prefs.preferredText) { v in core.prefs.update { $0.preferredText = v } })
@@ -397,20 +406,20 @@ private struct SettingsRows: View {
     @ViewBuilder private var home: some View {
         #if os(iOS)
         SettingRow(icon: "appletvremote.gen4.fill", title: "Telecomando della TV", sub: "Usa il telefono per comandare NexStream sulla TV di casa") { app.open(.remote) }
-            .modifier(FirstFocus(binding: first))
+            .nxFocusKey(SettingsRows.firstKey)
         #else
         SettingRow(icon: "iphone.radiowaves.left.and.right", title: "Telecomando dal telefono",
                    sub: (remoteHost.pairedPhones.isEmpty ? "Sul telefono apri NexStream e “Telecomando della TV”." : "Abbinati: \(remoteHost.pairedPhones.joined(separator: ", ")).") + (Lan.address().map { " Indirizzo: \($0)" } ?? "")) {
             app.open(.remote)
         }
-        .modifier(FirstFocus(binding: first))
+        .nxFocusKey(SettingsRows.firstKey)
         #endif
     }
 
     @ViewBuilder private var line: some View {
         if let s = app.session {
             SettingRow(icon: "antenna.radiowaves.left.and.right", title: "Linea \(s.username)", sub: SettingsRows.expiry(s), value: app.vpn ? "VPN attiva" : "VPN spenta", chevron: false) {}
-                .modifier(FirstFocus(binding: first))
+                .nxFocusKey(SettingsRows.firstKey)
         }
         #if os(tvOS)
         SettingRow(icon: "iphone", title: "Cambia linea dal telefono", sub: "Inquadra un QR e scrivi nome utente e password con la tastiera del telefono.") {
@@ -464,7 +473,7 @@ private struct SettingsRows: View {
         #endif
         SettingRow(icon: "info.circle", title: "NexStream \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")",
                    sub: "Stream4Me \(state.engineVersion)", chevron: false) {}
-            .modifier(FirstFocus(binding: first))
+            .nxFocusKey(SettingsRows.firstKey)
     }
 
     private func hours(_ h: Int) -> String { h == 0 ? "Mai" : (h == 1 ? "1 ora" : "\(h) ore") }

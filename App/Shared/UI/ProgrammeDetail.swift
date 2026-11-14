@@ -80,7 +80,11 @@ struct ProgrammeDetailView: View {
     var body: some View {
         Group {
             if let s = model.showing { page(s) }
-            else if model.missing { StateMessage(icon: "tv.slash", title: "Canale non disponibile", text: "Questo canale non è più nella tua linea.") }
+            else if model.missing {
+                // Apple TV: something to focus on, so the remote is never lost on this page
+                StateMessage(icon: "tv.slash", title: "Canale non disponibile", text: "Questo canale non è più nella tua linea.",
+                             actionTitle: Metrics.tv ? "Indietro" : nil) { app.pop() }
+            }
             else { BrandLoader().frame(maxWidth: .infinity, maxHeight: .infinity) }
         }
         .nxPage()

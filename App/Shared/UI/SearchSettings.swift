@@ -232,6 +232,8 @@ struct SettingRow: View {
             }
         }
         .buttonStyle(NxPlainStyle(scale: 0.99))
+        // a fixed key: the rows are built again when a choice list closes, and the focus goes back on the same row
+        .nxRestorable("settings." + title)
     }
 }
 
