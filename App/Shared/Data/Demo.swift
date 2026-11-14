@@ -10,6 +10,9 @@ enum Demo {
         guard let i = args.firstIndex(of: name), i + 1 < args.count else { return nil }
         return args[i + 1]
     }
+    /// Player screenshots: the `-nxPlayerPanel` state is applied once per run (the next episode or channel must not
+    /// apply it again).
+    @MainActor static var playerPanelDone = false
     /// A stream to play instead of the line's channels (player tests).
     static var liveTestUrl: String? { value("-nxLiveTest") }
 
@@ -73,7 +76,7 @@ enum Demo {
         let shows: [(String, String, String, String)] = [
             ("Il commissario Montalbano", "series", "Serie TV", "Montalbano indaga sulla scomparsa di un anziano professore: una vecchia fotografia lo porta lontano da Vigata."),
             ("Tg1", "news", "Notiziario", "Il telegiornale con le notizie del giorno, gli approfondimenti e il meteo."),
-            ("Inter - Juventus", "sport", "Serie A", "Il derby d'Italia in diretta dallo stadio Meazza, con il pre partita e le interviste."),
+            ("Milan - Napoli", "sport", "Serie A", "Il big match della giornata in diretta da San Siro, con il pre partita e le interviste."),
             ("Interstellar", "movie", "Film", "Un gruppo di esploratori viaggia attraverso un wormhole alla ricerca di un nuovo pianeta per l'umanità."),
             ("Pechino Express", "show", "Intrattenimento", "Le coppie in gara attraversano l'Asia con un euro al giorno: oggi la tappa più lunga."),
             ("Superquark", "doc", "Documentario", "Piero Angela racconta la scienza: le stelle di neutroni, il sonno degli animali e la memoria."),

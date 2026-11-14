@@ -160,7 +160,11 @@ struct VodPlayerView: View {
 
     // MARK: states
 
-    private func backdrop(_ opacity: Double) -> some View {
+    @ViewBuilder private func backdrop(_ opacity: Double) -> some View {
+        #if os(tvOS)
+        // the TV hides the paused picture behind these screens
+        Color.black.ignoresSafeArea().allowsHitTesting(false)
+        #endif
         NxImage(url: Img.tmdb(model.details.bestBackdrop ?? model.details.backdropPath, "w1280"), maxPixel: 1600) { Color.black }
             .opacity(opacity).ignoresSafeArea(.container, edges: full ? .all : []).allowsHitTesting(false)
     }

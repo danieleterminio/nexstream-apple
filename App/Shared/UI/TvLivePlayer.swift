@@ -525,7 +525,8 @@ struct TvLiveLayer: View {
     /// plays, put the player in that state so the build pipeline can take its picture (an unreachable test stream shows
     /// the error screen by itself).
     private func demo() async {
-        guard let what = Demo.value("-nxPlayerPanel") else { return }
+        guard let what = Demo.value("-nxPlayerPanel"), !Demo.playerPanelDone else { return }
+        Demo.playerPanelDone = true
         for _ in 0..<60 {
             if player.state == .playing { break }
             try? await Task.sleep(nanoseconds: 500_000_000)
@@ -703,9 +704,10 @@ struct TvChannelsPanel: View {
     private var chips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 12) {
-                ForEach(groups, id: \.0) { g in
-                    TvChip(title: g.1, icon: g.0 == "fav" ? "star.fill" : nil, selected: g.0 == group) { focusList() }
-                        .focused($focus, equals: "g:" + g.0)
+                let gs = groups
+                ForEach(gs.indices, id: \.self) { i in
+                    TvChip(title: gs[i].1, icon: gs[i].0 == "fav" ? "star.fill" : nil, selected: gs[i].0 == group) { focusList() }
+                        .focused($focus, equals: "g:" + gs[i].0)
                 }
             }
             .padding(.vertical, 10).padding(.horizontal, 4)

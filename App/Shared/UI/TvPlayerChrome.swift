@@ -306,6 +306,12 @@ struct TvVodLayer: View {
             .onExitCommand { model.creditsDismissed = true; focus = .surface }
         }
         .padding(.horizontal, 80).padding(.bottom, showControls ? 300 : 90)
+        .background(alignment: .bottom) {
+            // keeps the two buttons readable on a bright picture
+            LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .top, endPoint: .bottom)
+                .frame(height: 360).allowsHitTesting(false).opacity(showControls ? 0 : 1)
+        }
+        .ignoresSafeArea()
     }
 
     // MARK: panels
@@ -405,7 +411,8 @@ struct TvVodLayer: View {
     /// Launch argument `-nxPlayerPanel paused|seek|options|tracks|episodes|speed|source|credits|ended|still|failed|hidden`: once the video plays, put the
     /// player in that state so the build pipeline can take its picture.
     private func demo() async {
-        guard let what = Demo.value("-nxPlayerPanel") else { return }
+        guard let what = Demo.value("-nxPlayerPanel"), !Demo.playerPanelDone else { return }
+        Demo.playerPanelDone = true
         for _ in 0..<160 {
             if player.state == .playing && model.duration > 0 { break }
             try? await Task.sleep(nanoseconds: 500_000_000)
