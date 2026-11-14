@@ -53,7 +53,9 @@ final class PageTests: NxUITestCase {
     /// The page sometimes starts with nothing focused (then BACK leaves the app, see
     /// RailTests.testBackOnSectionRootFocusesRail): a move wakes the focus up so the BACK chain can still be checked.
     private func wakeFocus() {
-        if !wait(3, { focused.exists }) { snap("no-focus-at-start"); press(.down, wait: 1.0); press(.up, wait: 1.0) }
+        if !wait(3, { focused.exists }) { snap("no-focus-at-start"); press(.down, wait: 1.0) }
+        if railFocused { press(.right, wait: 1.0) }
+        if railFocused || !focused.exists { press(.down, wait: 1.0) }
         XCTAssertTrue(focused.exists && !railFocused, "no focus in the page, \(focusInfo)")
     }
 
