@@ -3,46 +3,58 @@ import XCTest
 /// Pushed pages (spec 2: BACK = the page before, focus restored) and the gates (BACK = the exit question).
 final class PageTests: NxUITestCase {
 
-    /// Film: walk down the rows until a card opens its title page (genre chips open a genre page: closed and skipped);
-    /// BACK returns to the Film root with the focus on that card.
-    func testOpenTitleFromFilmAndBack() { openTitleAndBack("movies", extra: ["-nxSection", "movies"]) }
-
-    /// Home: the same from Home (live cards may open the player or a programme page: closed and skipped).
-    func testOpenTitleFromHomeAndBack() { openTitleAndBack("home", extra: []) }
-
-    private func openTitleAndBack(_ s: String, extra: [String]) {
-        launch(extra, waitFor: "rail.\(s)", settle: 8)
-        XCTAssertFalse(railFocused, "the focus should start in the page, \(focusInfo)")
-        // the page sometimes starts with nothing focused (then BACK would leave the app): a move wakes the focus up.
-        // That bug is covered by RailTests.testBackOnSectionRootFocusesRail; here it must not hide the BACK chain.
-        if !wait(3, { focused.exists }) { snap("no-focus-at-start"); press(.down, wait: 1.0) }
-        var card = ""
-        var opened = false
-        var tried = [String]()
-        for row in 0..<8 {
-            card = focusedLabel
-            tried.append(card)
-            press(.select, wait: 3.0)
-            assertAlive("select on '\(card)' (row \(row))")
-            if el("page.title").waitForExistence(timeout: 6) { opened = true; break }
-            snap("not-a-title-\(row)")
-            // something else opened (player, programme or genre page): close it; if nothing opened, just go on
-            if playerShown { _ = closePlayerWithBack(max: 5); pause(2) } else if focused.exists && !focusInside("section.\(s)") { back(wait: 2.0) }
-            assertAlive("closing what '\(card)' opened")
-            if railFocused { press(.right, wait: 1.0) }
-            if !focused.exists { press(.up, wait: 1.0) }
-            press(.down, wait: 1.2)
-        }
+    /// Film: the first focus is the first genre chip. Select → the genre page (pushed); select on its first card → the
+    /// title page (pushed); BACK → the genre page; BACK → the Film root with the focus back on the chip.
+    func testGenreThenTitleFromFilmAndBackChain() {
+        launch(["-nxSection", "movies"], waitFor: "rail.movies", settle: 8)
+        wakeFocus()
+        let chip = focusedLabel
+        press(.select, wait: 4.0)
+        snap("genre-page")
+        assertAlive("select on '\(chip)'")
+        XCTAssertFalse(playerShown, "a genre chip should not play anything")
+        XCTAssertTrue(wait(5) { focused.exists && !focusInside("section.movies") }, "select on '\(chip)' did not push a page, \(focusInfo)")
+        let card = focusedLabel
+        press(.select, wait: 4.0)
         snap("title-page")
-        XCTAssertTrue(opened, "no card opened a title page; tried: \(tried), \(focusInfo)")
+        assertAlive("select on '\(card)' in the genre page")
+        XCTAssertTrue(el("page.title").waitForExistence(timeout: 10), "select on '\(card)' did not open the title page, \(focusInfo)")
         back(wait: 2.0)
-        snap("after-back")
+        snap("back-to-genre")
         assertAlive("BACK on the title page")
         XCTAssertTrue(waitGone(el("page.title"), 5), "the title page is still shown after BACK")
-        XCTAssertTrue(el("section.\(s)").waitForExistence(timeout: 5), "not back on the \(s) root")
-        XCTAssertFalse(railFocused, "BACK from a pushed page should restore the focus in the page, not the rail")
-        XCTAssertTrue(wait(3) { focusInside("section.\(s)") }, "the focus is not back in the page, \(focusInfo)")
+        XCTAssertEqual(focusedLabel, card, "BACK should restore the focus on the card that opened the title")
+        back(wait: 2.0)
+        snap("back-to-film")
+        assertAlive("BACK on the genre page")
+        XCTAssertTrue(wait(5) { focusInside("section.movies") }, "BACK on the genre page should return to the Film root, \(focusInfo)")
+        XCTAssertEqual(focusedLabel, chip, "the focus should be back on the chip '\(chip)'")
+    }
+
+    /// Home: the first card is an "in onda" programme; select pushes its programme page, BACK returns to Home with the
+    /// focus on that card.
+    func testProgrammeFromHomeAndBack() {
+        launch(settle: 8)
+        wakeFocus()
+        let card = focusedLabel
+        press(.select, wait: 4.0)
+        snap("pushed")
+        assertAlive("select on '\(card)'")
+        XCTAssertFalse(playerShown, "the first Home card should open its page, not play")
+        XCTAssertTrue(wait(5) { focused.exists && !focusInside("section.home") }, "select on '\(card)' did not push a page, \(focusInfo)")
+        back(wait: 2.0)
+        snap("after-back")
+        assertAlive("BACK on the pushed page")
+        XCTAssertFalse(text("Vuoi uscire da NexStream?").exists, "BACK on a pushed page must not ask to exit")
+        XCTAssertTrue(wait(5) { focusInside("section.home") }, "BACK should return to Home, \(focusInfo)")
         XCTAssertEqual(focusedLabel, card, "the focus should be back on the card that opened the page")
+    }
+
+    /// The page sometimes starts with nothing focused (then BACK leaves the app, see
+    /// RailTests.testBackOnSectionRootFocusesRail): a move wakes the focus up so the BACK chain can still be checked.
+    private func wakeFocus() {
+        if !wait(3, { focused.exists }) { snap("no-focus-at-start"); press(.down, wait: 1.0); press(.up, wait: 1.0) }
+        XCTAssertTrue(focused.exists && !railFocused, "no focus in the page, \(focusInfo)")
     }
 
     /// "Chi guarda?" gate (-nxPicker): BACK shows the exit question with Resta focused; BACK again stays.
