@@ -3,48 +3,41 @@ import XCTest
 /// Pushed pages (spec 2: BACK = the page before, focus restored) and the gates (BACK = the exit question).
 final class PageTests: NxUITestCase {
 
-    /// Film: select on the first card opens its title page; BACK returns to the Film root with the focus in the page.
-    func testOpenTitleFromFilmAndBack() {
-        launch(["-nxSection", "movies"], waitFor: "rail.movies", settle: 8)
-        XCTAssertFalse(railFocused, "the focus should start on a card, \(focusInfo)")
-        let card = focusedLabel
-        press(.select, wait: 2.5)
-        snap("title-page")
-        assertAlive("select on a Film card")
-        XCTAssertTrue(el("page.title").waitForExistence(timeout: 15), "no title page after select on '\(card)', \(focusInfo)")
-        back(wait: 2.0)
-        snap("after-back")
-        assertAlive("BACK on the title page")
-        XCTAssertTrue(waitGone(el("page.title"), 5), "the title page is still shown after BACK")
-        XCTAssertTrue(el("section.movies").waitForExistence(timeout: 5), "not back on the Film root")
-        XCTAssertFalse(railFocused, "BACK from a pushed page should restore the focus in the page, not the rail")
-        XCTAssertTrue(wait(3) { focusInside("section.movies") }, "the focus is not back in the Film page, \(focusInfo)")
-        XCTAssertEqual(focusedLabel, card, "the focus should be back on the card that opened the page")
-    }
+    /// Film: walk down the rows until a card opens its title page (genre chips open a genre page: closed and skipped);
+    /// BACK returns to the Film root with the focus on that card.
+    func testOpenTitleFromFilmAndBack() { openTitleAndBack("movies", extra: ["-nxSection", "movies"]) }
 
-    /// Home: walk down the rows until a card opens a title page (live cards may open the player or a programme page:
-    /// those are closed and skipped), then BACK returns to Home with the app alive.
-    func testOpenTitleFromHomeAndBack() {
-        launch(settle: 8)
-        var opened = false
+    /// Home: the same from Home (live cards may open the player or a programme page: closed and skipped).
+    func testOpenTitleFromHomeAndBack() { openTitleAndBack("home", extra: []) }
+
+    private func openTitleAndBack(_ s: String, extra: [String]) {
+        launch(extra, waitFor: "rail.\(s)", settle: 8)
+        XCTAssertFalse(railFocused, "the focus should start in the page, \(focusInfo)")
         var card = ""
-        for row in 0..<7 {
+        var opened = false
+        var tried = [String]()
+        for row in 0..<8 {
             card = focusedLabel
+            tried.append(card)
             press(.select, wait: 3.0)
-            assertAlive("select on Home row \(row)")
+            assertAlive("select on '\(card)' (row \(row))")
             if el("page.title").waitForExistence(timeout: 6) { opened = true; break }
-            if playerShown { _ = closePlayerWithBack() } else if !el("section.home").exists { back(wait: 2.0) }
-            assertAlive("closing what row \(row) opened")
-            press(.down, wait: 1.0)
+            snap("not-a-title-\(row)")
+            // something else opened (player, programme or genre page): close it; if nothing opened, just go on
+            if playerShown { _ = closePlayerWithBack() } else if !focusInside("section.\(s)") { back(wait: 2.0) }
+            assertAlive("closing what '\(card)' opened")
+            if railFocused { press(.right, wait: 1.0) }
+            press(.down, wait: 1.2)
         }
         snap("title-page")
-        XCTAssertTrue(opened, "no Home card opened a title page, \(focusInfo)")
+        XCTAssertTrue(opened, "no card opened a title page; tried: \(tried), \(focusInfo)")
         back(wait: 2.0)
         snap("after-back")
         assertAlive("BACK on the title page")
         XCTAssertTrue(waitGone(el("page.title"), 5), "the title page is still shown after BACK")
-        XCTAssertTrue(el("section.home").waitForExistence(timeout: 5), "not back on Home")
+        XCTAssertTrue(el("section.\(s)").waitForExistence(timeout: 5), "not back on the \(s) root")
         XCTAssertFalse(railFocused, "BACK from a pushed page should restore the focus in the page, not the rail")
+        XCTAssertTrue(wait(3) { focusInside("section.\(s)") }, "the focus is not back in the page, \(focusInfo)")
         XCTAssertEqual(focusedLabel, card, "the focus should be back on the card that opened the page")
     }
 

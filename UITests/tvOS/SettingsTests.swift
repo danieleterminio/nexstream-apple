@@ -77,7 +77,9 @@ final class SettingsTests: NxUITestCase {
         launch(["-nxSection", "settings", "-nxSettingsCat", "live"], waitFor: "rail.settings", settle: 3)
         press(.right, wait: 1.0)
         XCTAssertTrue(wait(3) { focusInside("settings.rows") }, "RIGHT should enter the rows, \(focusInfo)")
-        XCTAssertTrue(focusedLabel.hasPrefix("Qualità video"), "first row should be Qualità video, \(focusInfo)")
+        // RIGHT lands on the row at the height of the category: walk up to the first row
+        for _ in 0..<6 where !focusedLabel.hasPrefix("Qualità video") { press(.up, wait: 0.7) }
+        XCTAssertTrue(focusedLabel.hasPrefix("Qualità video"), "could not reach Qualità video, \(focusInfo)")
         press(.select, wait: 1.5)
         XCTAssertTrue(el("settings.choice").waitForExistence(timeout: 4), "the choice did not open in place")
         snap("quality-choice")

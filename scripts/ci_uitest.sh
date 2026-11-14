@@ -44,6 +44,10 @@ if [ -d "$RES" ]; then
   xcrun xcresulttool get test-results summary --path "$RES" > "$OUT/uitest-summary.json" 2> /dev/null || echo "summary failed"
   xcrun xcresulttool get test-results tests --path "$RES" > "$OUT/uitest-tests.json" 2> /dev/null || echo "tests list failed"
   python3 scripts/uitest_report.py "$OUT" || echo "report failed"
+  # Xcode records a screen video of every UI test: about 1 GB per run, too big for the artifact (the PNGs stay)
+  NV=$(find "$OUT/uitest" -type f \( -name "*.mp4" -o -name "*.mov" \) | wc -l | tr -d ' ')
+  find "$OUT/uitest" -type f \( -name "*.mp4" -o -name "*.mov" \) -delete
+  echo "removed $NV screen recordings; left: $(find "$OUT/uitest" -type f | wc -l | tr -d ' ') files, $(du -sh "$OUT/uitest" | cut -f1)"
 fi
 
 # the app's own log and any crash report of this run
