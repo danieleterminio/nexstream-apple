@@ -1,0 +1,71 @@
+name: uitest
+
+# Apple TV remote-control UI tests on the tvOS simulator (UITests/tvOS, scheme NexStreamTVUITests).
+# gh workflow run uitest.yml --ref <branch> [-f filter="RailTests,VodPlayerTests/testSelectTogglesPause"]
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: "tests to run: empty = all; Class or Class/testName, separated by commas or spaces"
+        default: ""
+
+concurrency:
+  group: uitest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  uitest:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.3.app
+          xcodebuild -version
+          xcrun simctl list devices available | grep -E "Apple TV" || true
+
+      - name: Cache frameworks
+        uses: actions/cache@v4
+        with:
+          path: Frameworks
+          key: fw-py313b18-vlc360-v1
+
+      - name: Fetch frameworks
+        run: bash scripts/fetch_frameworks.sh
+
+      - name: Secrets
+        env:
+          MEGAOTT_API_TOKEN: ${{ secrets.MEGAOTT_API_TOKEN }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+        run: bash scripts/write_secrets.sh
+
+      - name: XcodeGen
+        run: |
+          which xcodegen || brew install xcodegen
+          xcodegen generate
+
+      - name: UI tests (Apple TV simulator)
+        env:
+          FILTER: ${{ github.event.inputs.filter }}
+        run: bash scripts/ci_uitest.sh "$FILTER"
+
+      - name: Upload screenshots and summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uitest
+          path: |
+            build/out
+            !build/out/uitest.xcresult
+          retention-days: 7
+
+      - name: Upload result bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uitest-xcresult
+          path: build/out/uitest.xcresult
+          retention-days: 3
+          if-no-files-found: ignore

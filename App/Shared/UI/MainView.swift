@@ -109,6 +109,7 @@ struct MainView: View {
     private func stack(_ s: AppSection) -> some View {
         NavigationStack(path: app.path(s)) {
             root(s)
+                .accessibilityElement(children: .contain).accessibilityIdentifier("section.\(s.rawValue)")
                 #if os(iOS)
                 .safeAreaPadding(.bottom, Metrics.tabBar)
                 #endif
@@ -335,6 +336,7 @@ private struct SideRail: View {
             brand(open).frame(height: 64).padding(.bottom, 22)
             RailProfile(profile: profile, open: open) { app.changeProfile() }
                 .focused(focus, equals: .profile)
+                .accessibilityIdentifier("rail.profile")
                 .padding(.leading, SideRail.inset)
             Rectangle().fill(open ? NxColor.hairline : Color.clear).frame(width: SideRail.pillOpenW, height: 1)
                 .padding(.leading, SideRail.inset).padding(.vertical, 12)
@@ -342,6 +344,7 @@ private struct SideRail: View {
                 ForEach(MainView.tabs) { s in
                     RailItem(section: s, open: open, selected: app.section == s) { onSelect(s) }
                         .focused(focus, equals: .section(s))
+                        .accessibilityIdentifier("rail.\(s.rawValue)")
                         .padding(.leading, SideRail.inset)
                 }
             }
@@ -484,7 +487,7 @@ struct RouteView: View {
         Group {
             switch route {
             case .programme(let channelId, let programmeId): ProgrammeDetailView(channelId: channelId, programmeId: programmeId)
-            case .title(let media, let id): TitleDetailView(media: media, tmdbId: id)
+            case .title(let media, let id): TitleDetailView(media: media, tmdbId: id).accessibilityElement(children: .contain).accessibilityIdentifier("page.title")
             case .genre(let media, let id, let name): GenreView(media: media, genreId: id, name: name)
             case .teams: TeamsView()
             case .manageProfiles: ProfilesView(manage: true) { app.core.profiles.refresh(); app.pop() }

@@ -4,13 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       what:
-        description: "sim = build both for the simulator and take screenshots · ios / tv = one platform · ipa = unsigned device builds"
+        description: "sim = build both for the simulator and take screenshots · ios / tv = one platform · ipa = unsigned device builds · uitest = Apple TV remote UI tests"
         default: sim
       shots:
         description: "screenshots: name:seconds:launch args|name:seconds:args (empty = one after 25 s)"
         default: ""
       pair:
         description: "1 = also pair the iPhone simulator as remote of the Apple TV simulator (VPN off on both)"
+        default: ""
+      filter:
+        description: "uitest only: Class or Class/testName, separated by commas (empty = all)"
         default: ""
 
 concurrency:
@@ -20,11 +23,12 @@ concurrency:
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
       WHAT: ${{ github.event.inputs.what || 'sim' }}
       NX_SHOTS: ${{ github.event.inputs.shots }}
       NX_PAIR: ${{ github.event.inputs.pair }}
+      NX_FILTER: ${{ github.event.inputs.filter }}
     steps:
       - uses: actions/checkout@v4
 
@@ -64,7 +68,7 @@ jobs:
         run: bash scripts/ci_build.sh NexStreamTV appletvsimulator
 
       - name: Run in the simulators
-        if: (success() || failure()) && env.WHAT != 'ipa'
+        if: (success() || failure()) && env.WHAT != 'ipa' && env.WHAT != 'uitest'
         run: |
           case "$WHAT" in ios) bash scripts/ci_run.sh ios ;; tv) bash scripts/ci_run.sh tv ;; *) bash scripts/ci_run.sh all ;; esac
 
@@ -72,10 +76,16 @@ jobs:
         if: env.WHAT == 'ipa'
         run: bash scripts/ci_ipa.sh
 
+      - name: Apple TV UI tests (simulator)
+        if: env.WHAT == 'uitest'
+        run: bash scripts/ci_uitest.sh "$NX_FILTER"
+
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: out
-          path: build/out
+          path: |
+            build/out
+            !build/out/uitest.xcresult
           retention-days: 7

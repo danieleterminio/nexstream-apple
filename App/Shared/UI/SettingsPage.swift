@@ -254,6 +254,7 @@ private struct SettingsSplit: View {
                 }
                 .buttonStyle(NxPlainStyle(scale: 1))
                 .focused($category, equals: c)
+                .accessibilityIdentifier("settings.cat.\(c.rawValue)")
             }
             Spacer(minLength: 0)
         }
@@ -276,11 +277,13 @@ private struct SettingsSplit: View {
                     }
                     .padding(.horizontal, Metrics.u(16)).padding(.bottom, Metrics.u(6))
                     SettingsChoiceList(choice: c, first: $firstRow) { choice = nil; backToRow() }
+                        .accessibilityElement(children: .contain).accessibilityIdentifier("settings.choice")
                 } else {
                     Text(selected.title).font(Metrics.tv ? NxFont.titleL : NxFont.titleM).foregroundStyle(NxColor.text)
                         .padding(.horizontal, Metrics.u(16)).padding(.bottom, Metrics.u(10))
                     SettingsRows(category: selected, state: state) { c in returnKey = FocusMemory.last; choice = c; firstRow = true }
                         .id("\(selected.rawValue)-\(state.rev)")
+                        .accessibilityElement(children: .contain).accessibilityIdentifier("settings.rows")
                 }
                 Color.clear.frame(height: 60)
             }
