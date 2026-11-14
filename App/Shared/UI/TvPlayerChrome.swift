@@ -95,10 +95,10 @@ struct TvVodLayer: View {
                 Color.clear.frame(height: 300).allowsHitTesting(false)
             }
             if player.state == .opening || player.state == .buffering { BrandLoader(size: 56) }
-            if showControls { controls.transition(.opacity) }
+            if showControls { controls.accessibilityElement(children: .contain).accessibilityIdentifier("player.controls").transition(.opacity) }
             if let f = flash { centreGlyph(f) }
             if creditsShown { credits }
-            if let p = panel { panelView(p).transition(.opacity).zIndex(5) }
+            if let p = panel { panelView(p).accessibilityElement(children: .contain).accessibilityIdentifier("player.panel.\(p.rawValue)").transition(.opacity).zIndex(5) }
         }
         .animation(.easeOut(duration: 0.2), value: panel)
         .animation(.easeOut(duration: 0.2), value: showControls)
@@ -125,6 +125,7 @@ struct TvVodLayer: View {
         }
         .buttonStyle(NxPlainStyle(scale: 1))
         .focused($focus, equals: .surface)
+        .accessibilityIdentifier("player.surface")
         .disabled(panel != nil)
         .onMoveCommand { dir in move(dir) }
         .onExitCommand { back() }
@@ -231,6 +232,7 @@ struct TvVodLayer: View {
             ForEach(options) { o in
                 TvOptionButton(icon: o.icon, title: o.title, action: o.action)
                     .focused($focus, equals: .option(o.id))
+                    .accessibilityIdentifier("player.option.\(o.id)")
             }
             Spacer(minLength: 0)
         }

@@ -102,10 +102,11 @@ private struct ExitQuestion: View {
             Text("Vuoi uscire da NexStream?").font(NxFont.titleM).foregroundStyle(NxColor.text).multilineTextAlignment(.center)
             VStack(spacing: Metrics.u(8)) {
                 NxButton("Resta", kind: .primary, wide: true) { app.dismissSheet() }
+                    .accessibilityIdentifier("exit.stay")
                     #if os(tvOS)
                     .focused($stay)
                     #endif
-                NxButton("Esci", kind: .quiet, wide: true) { app.dismissSheet(); AppExit.leave() }
+                NxButton("Esci", kind: .quiet, wide: true) { app.dismissSheet(); AppExit.leave() }.accessibilityIdentifier("exit.leave")
             }
             .padding(.top, Metrics.u(6))
         }

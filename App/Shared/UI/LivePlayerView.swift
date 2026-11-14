@@ -284,6 +284,7 @@ struct LivePlayerView: View {
             }
             .buttonStyle(NxPlainStyle(scale: 1))
             .focused($focused)
+            .accessibilityIdentifier("player.surface")
             .disabled(panel != nil || model.error != nil)
             .onMoveCommand { dir in
                 switch dir {
@@ -295,8 +296,8 @@ struct LivePlayerView: View {
                 }
             }
             .onExitCommand { tvBack() }
-            if model.error == nil && chrome.visible && panel == nil { controls.transition(.opacity) }
-            if let p = panel { tvPanel(p).transition(.opacity).zIndex(5) }
+            if model.error == nil && chrome.visible && panel == nil { controls.accessibilityElement(children: .contain).accessibilityIdentifier("player.controls").transition(.opacity) }
+            if let p = panel { tvPanel(p).accessibilityElement(children: .contain).accessibilityIdentifier("player.panel.\(p.rawValue)").transition(.opacity).zIndex(5) }
         }
         .onPlayPauseCommand { if panel == nil { model.togglePause(); chrome.show() } }
         .onAppear { focused = true }

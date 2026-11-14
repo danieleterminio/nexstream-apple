@@ -187,6 +187,22 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: ""
         APPLICATION_EXTENSION_API_ONLY: "YES"
         SKIP_INSTALL: "YES"
+  # Remote-control UI tests of the Apple TV app (XCUIRemote on the simulator): .github/workflows/uitest.yml runs them
+  NexStreamTVUITests:
+    type: bundle.ui-testing
+    platform: tvOS
+    sources:
+      - path: UITests/tvOS
+    dependencies:
+      - target: NexStreamTV
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.nexstream.one.tvuitests
+        PRODUCT_NAME: NexStreamTVUITests
+        TEST_TARGET_NAME: NexStreamTV
+        GENERATE_INFOPLIST_FILE: "YES"
+        TARGETED_DEVICE_FAMILY: "3"
+        SWIFT_OBJC_BRIDGING_HEADER: ""
 schemes:
   NexStream:
     build:
@@ -200,3 +216,12 @@ schemes:
         NexStreamTV: all
     run:
       config: Debug
+  NexStreamTVUITests:
+    build:
+      targets:
+        NexStreamTV: all
+        NexStreamTVUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - NexStreamTVUITests

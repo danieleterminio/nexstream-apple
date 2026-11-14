@@ -92,6 +92,7 @@ struct MainView: View {
     private func stack(_ s: AppSection) -> some View {
         NavigationStack(path: app.path(s)) {
             root(s)
+                .accessibilityElement(children: .contain).accessibilityIdentifier("section.\(s.rawValue)")
                 #if os(iOS)
                 .safeAreaPadding(.bottom, Metrics.tabBar)
                 #endif
@@ -191,6 +192,7 @@ private struct SideRail: View {
                 }
                 .buttonStyle(NxPlainStyle(scale: 1))
                 .focused(focus, equals: s)
+                .accessibilityIdentifier("rail.\(s.rawValue)")
                 .padding(.leading, 22)
             }
         }
@@ -219,7 +221,7 @@ struct RouteView: View {
         Group {
             switch route {
             case .programme(let channelId, let programmeId): ProgrammeDetailView(channelId: channelId, programmeId: programmeId)
-            case .title(let media, let id): TitleDetailView(media: media, tmdbId: id)
+            case .title(let media, let id): TitleDetailView(media: media, tmdbId: id).accessibilityElement(children: .contain).accessibilityIdentifier("page.title")
             case .genre(let media, let id, let name): GenreView(media: media, genreId: id, name: name)
             case .teams: TeamsView()
             case .manageProfiles: ProfilesView(manage: true) { app.core.profiles.refresh(); app.pop() }
