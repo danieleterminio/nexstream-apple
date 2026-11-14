@@ -149,7 +149,7 @@ struct MainView: View {
         railReady = false
         try? await Task.sleep(nanoseconds: 900_000_000)
         var waited = 0
-        while !Task.isCancelled && waited < 50 && rail == nil && FocusMemory.current == nil {
+        while !Task.isCancelled && waited < 50 && rail == nil && FocusMemory.current == nil && app.playing == nil && app.sheets.isEmpty {
             resetFocus(in: pageScope)
             try? await Task.sleep(nanoseconds: 300_000_000)
             waited += 1

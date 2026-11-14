@@ -136,6 +136,8 @@ struct Focusable<Content: View>: View {
             if f { FocusMemory.noteFocus(restoreKey); FocusMemory.current = fid; onFocus?() }
             else if FocusMemory.current == fid { FocusMemory.current = nil }
         }
+        // a focused view that goes away (a panel closing) leaves nothing focused
+        .onDisappear { if FocusMemory.current == fid { FocusMemory.current = nil } }
         #else
         content(false)
         #endif
