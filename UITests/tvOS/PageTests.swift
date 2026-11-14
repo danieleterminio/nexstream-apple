@@ -27,7 +27,7 @@ final class PageTests: NxUITestCase {
             if el("page.title").waitForExistence(timeout: 6) { opened = true; break }
             snap("not-a-title-\(row)")
             // something else opened (player, programme or genre page): close it; if nothing opened, just go on
-            if playerShown { _ = closePlayerWithBack() } else if focused.exists && !focusInside("section.\(s)") { back(wait: 2.0) }
+            if playerShown { _ = closePlayerWithBack(max: 5); pause(2) } else if focused.exists && !focusInside("section.\(s)") { back(wait: 2.0) }
             assertAlive("closing what '\(card)' opened")
             if railFocused { press(.right, wait: 1.0) }
             if !focused.exists { press(.up, wait: 1.0) }

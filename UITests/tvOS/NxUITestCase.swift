@@ -157,7 +157,10 @@ class NxUITestCase: XCTestCase {
         }
     }
 
-    var playerShown: Bool { el("player.surface").exists }
+    /// The player is on screen (its surface, its controls, or the "Audio e sottotitoli" option of either player).
+    var playerShown: Bool {
+        el("player.surface").exists || el("player.controls").exists || el("player.option.tracks").exists || labelled("Audio e sottotitoli").exists
+    }
 
     /// BACK until the player is gone (at most `max` presses); the app must stay in the foreground after each.
     func closePlayerWithBack(max: Int = 4) -> Int? {
