@@ -183,7 +183,7 @@ private struct SettingsSplit: View {
     @State private var returnKey: String? = nil
 
     private func backToRow() {
-        FocusMemory.restore(returnKey ?? SettingsRows.firstKey, after: 0.05)
+        FocusMemory.restore(returnKey ?? SettingsRows.firstKey, after: 0.12)
         returnKey = nil
     }
 
@@ -211,6 +211,14 @@ private struct SettingsSplit: View {
         #if os(tvOS)
         .defaultFocus($category, selected)
         #endif
+        .task {
+            // build pipeline, with -nxSettingsChoice: the choice list closes as BACK does, the focus goes on its row
+            guard Demo.args.contains("-nxChoiceClose") else { return }
+            try? await Task.sleep(nanoseconds: 9_000_000_000)
+            returnKey = "settings.Lingua dell'audio"
+            choice = nil
+            backToRow()
+        }
         .onChange(of: category) { _, c in
             // on the TV the category under the focus is the one on the right, no click needed
             if let c = c, c != selected { selected = c; choice = nil }

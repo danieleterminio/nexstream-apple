@@ -22,6 +22,8 @@ struct MainView: View {
     @State private var pageReturn: PageReturn? = nil
     /// For every section, where the focus was when each of its pages was opened: BACK puts it back there.
     @State private var pushOrigins: [AppSection: [String?]] = [:]
+    /// What had the focus when the player opened.
+    @State private var playOrigin: String? = nil
     static let tabs: [AppSection] = [.search, .home, .live, .guide, .movies, .series, .mine, .settings]
     #else
     static let tabs: [AppSection] = [.home, .movies, .series, .live, .mine]
@@ -43,7 +45,11 @@ struct MainView: View {
             #endif
         }
         #if os(tvOS)
-        .onChange(of: app.playing == nil) { _, _ in pulse() }
+        .onChange(of: app.playing == nil) { _, idle in
+            pulse()
+            // the player closed: back on the card / button that started it (docs/tv-experience.md §3, BACK)
+            if idle { FocusMemory.restore(playOrigin, after: 0.4) } else { playOrigin = FocusMemory.inRail ? nil : FocusMemory.last }
+        }
         .onChange(of: app.sheets.isEmpty) { _, _ in pulse() }
         .onChange(of: rail) { old, new in railMoved(old, new) }
         .onChange(of: app.paths) { old, new in pathsChanged(old, new) }
@@ -54,6 +60,7 @@ struct MainView: View {
             if !Task.isCancelled { railReady = true }
         }
         .task { await demoRail() }
+        .task { await demoFocusTest() }
         #endif
         #if os(iOS)
         .ignoresSafeArea(.keyboard, edges: .bottom)
@@ -118,7 +125,7 @@ struct MainView: View {
         // of the page is the billboard (nothing to focus at the height of the menu entry)
         .focusSection()
         // BACK (Android: the same chain): a page → the one before (the stack does it), a section → the side menu
-        .onExitCommand(perform: (app.paths[s] ?? []).isEmpty ? { railReady = true; rail = .section(s) } : nil)
+        .onExitCommand(perform: (app.paths[s] ?? []).isEmpty ? { enterRail(s) } : nil)
         #endif
     }
 
@@ -134,6 +141,13 @@ struct MainView: View {
         app.reselect += 1
         pulse()
         if wasRoot { backToPage() }
+    }
+
+    /// BACK on a section's first page: the focus goes to the side menu, on that section.
+    private func enterRail(_ s: AppSection) {
+        if railReady { rail = .section(s); return }
+        railReady = true
+        DispatchQueue.main.async { rail = .section(s) }
     }
 
     /// RIGHT from the side menu (or select on the section in view): back on the element the page had before.
@@ -197,8 +211,34 @@ struct MainView: View {
             app.askExit()
         }
     }
+
+    /// Build pipeline, `-nxFocusTest`: a dialog whose second button is focused from outside (as the exit question and
+    /// the player do), then the focus memory moves it to the first and back (screenshots at about 12, 17 and 24 s).
+    private func demoFocusTest() async {
+        guard Demo.args.contains("-nxFocusTest") else { return }
+        try? await Task.sleep(nanoseconds: 8_000_000_000)
+        app.present(nil, style: .dialog) { FocusTestDialog() }
+        try? await Task.sleep(nanoseconds: 6_000_000_000)
+        FocusMemory.restore.send("ft.first")
+        try? await Task.sleep(nanoseconds: 6_000_000_000)
+        FocusMemory.restore.send("ft.second")
+    }
     #endif
 }
+
+#if os(tvOS)
+private struct FocusTestDialog: View {
+    @FocusState private var second: Bool
+    var body: some View {
+        VStack(spacing: 16) {
+            NxButton("Primo", wide: true) {}.nxFocusKey("ft.first")
+            NxButton("Secondo", wide: true) {}.nxFocusKey("ft.second").focused($second)
+        }
+        .onAppear { second = true }
+    }
+}
+#endif
+
 
 #if os(iOS)
 /// The bottom bar: flat black, the section in view in white.
