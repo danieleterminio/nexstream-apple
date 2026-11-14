@@ -88,5 +88,11 @@ final class PageTests: NxUITestCase {
         snap("after-pick")
         assertAlive("select on a profile")
         XCTAssertTrue(el("rail.home").waitForExistence(timeout: 15), "picking a profile did not open the app")
+        // the gate went away: something of the page must have the focus (Android QA found none there)
+        XCTAssertTrue(wait(8) { self.focused.exists && !self.railFocused && self.focusInside("section.home") }, "after the profile picker nothing of Home is focused, \(focusInfo)")
+        snap("home-focused")
+        back(wait: 1.2)
+        assertAlive("BACK after the picker")
+        XCTAssertTrue(waitFocus("rail.home", 3), "BACK on Home after the picker should focus the rail, \(focusInfo)")
     }
 }

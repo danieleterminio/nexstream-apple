@@ -168,8 +168,13 @@ final class AppDB {
 
     static let progCols = "id, epgId, start, stop, title, \"desc\", icon, category, subtitle, episode, year, poster, kind, show, firstRun, highlight, live, src"
     static func programme(_ r: SQLRow) -> ProgrammeEntity {
-        ProgrammeEntity(id: r.int64(0), epgId: r.string(1), start: r.int64(2), stop: r.int64(3), title: r.string(4), desc: r.stringOrNil(5), icon: r.stringOrNil(6), category: r.stringOrNil(7),
-                        subtitle: r.stringOrNil(8), episode: r.stringOrNil(9), year: r.intOrNil(10), poster: r.stringOrNil(11), kind: r.stringOrNil(12), show: r.stringOrNil(13),
+        // texts through fixText on the way out too: guides stored before entity decoding existed, any source that slips
+        let title: String = Broadcasters.fixText(r.string(4))
+        let desc: String? = r.stringOrNil(5).map { Broadcasters.fixText($0) }
+        let sub: String? = r.stringOrNil(8).map { Broadcasters.fixText($0) }
+        let show: String? = r.stringOrNil(13).map { Broadcasters.fixText($0) }
+        return ProgrammeEntity(id: r.int64(0), epgId: r.string(1), start: r.int64(2), stop: r.int64(3), title: title, desc: desc, icon: r.stringOrNil(6), category: r.stringOrNil(7),
+                        subtitle: sub, episode: r.stringOrNil(9), year: r.intOrNil(10), poster: r.stringOrNil(11), kind: r.stringOrNil(12), show: show,
                         firstRun: r.bool(14), highlight: r.bool(15), live: r.bool(16), src: r.string(17))
     }
     private func progs(_ whereOrder: String, _ args: [Any?]) -> [ProgrammeEntity] { rows("SELECT \(AppDB.progCols) FROM programmes \(whereOrder)", args, AppDB.programme) }

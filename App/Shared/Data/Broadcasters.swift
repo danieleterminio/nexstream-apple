@@ -317,6 +317,54 @@ enum Broadcasters {
         if t.contains("Ã") || t.contains("â€") {
             if let d = t.data(using: .isoLatin1), let fixed = String(data: d, encoding: .utf8), !fixed.contains("\u{FFFD}") { t = fixed }
         }
+        // others leave HTML entities in the text ("Quattro supereroi e un beb&#xE8;", "Tom &amp; Jerry")
+        if t.contains("&") { t = decodeEntities(t) }
         return t.replacingOccurrences(of: "\u{00A0}", with: " ")
+    }
+
+    private static let namedEntities: [String: String] = [
+        "amp": "&", "quot": "\"", "apos": "'", "lt": "<", "gt": ">", "nbsp": " ",
+        "egrave": "è", "eacute": "é", "agrave": "à", "aacute": "á", "ograve": "ò", "oacute": "ó", "ugrave": "ù", "uacute": "ú",
+        "igrave": "ì", "iacute": "í", "Egrave": "È", "Eacute": "É", "Agrave": "À", "Ograve": "Ò", "Ugrave": "Ù", "Igrave": "Ì",
+        "ccedil": "ç", "ntilde": "ñ", "auml": "ä", "ouml": "ö", "uuml": "ü", "szlig": "ß", "euml": "ë", "iuml": "ï",
+        "rsquo": "\u{2019}", "lsquo": "\u{2018}", "rdquo": "\u{201D}", "ldquo": "\u{201C}", "laquo": "«", "raquo": "»",
+        "hellip": "…", "ndash": "–", "mdash": "—", "deg": "°", "euro": "€", "copy": "©", "reg": "®", "trade": "™", "middot": "·",
+    ]
+
+    /// "&#232;", "&#xE8;", "&egrave;" -> "è" (two passes, for "&amp;#xE8;"); unknown names stay as they are.
+    static func decodeEntities(_ s: String) -> String {
+        var cur = s
+        for _ in 0..<2 {
+            guard cur.contains("&") else { break }
+            var out = ""
+            out.reserveCapacity(cur.count)
+            var i = cur.startIndex
+            var changed = false
+            while i < cur.endIndex {
+                let c: Character = cur[i]
+                if c == "&", let semi = cur[i...].prefix(12).firstIndex(of: ";") {
+                    let body = String(cur[cur.index(after: i)..<semi])
+                    var rep: String? = nil
+                    if body.hasPrefix("#x") || body.hasPrefix("#X") {
+                        if let v = UInt32(body.dropFirst(2), radix: 16), let u = Unicode.Scalar(v) { rep = String(Character(u)) }
+                    } else if body.hasPrefix("#") {
+                        if let v = UInt32(body.dropFirst()), let u = Unicode.Scalar(v) { rep = String(Character(u)) }
+                    } else {
+                        rep = namedEntities[body]
+                    }
+                    if let r = rep {
+                        out += r
+                        i = cur.index(after: semi)
+                        changed = true
+                        continue
+                    }
+                }
+                out.append(c)
+                i = cur.index(after: i)
+            }
+            cur = out
+            if !changed { break }
+        }
+        return cur
     }
 }
