@@ -120,6 +120,7 @@ struct MainView: View {
         #if os(tvOS)
         .padding(.leading, Metrics.rail)
         .focusScope(pageScope)
+        .environment(\.nxPageSection, s)
         // one block for the focus engine: RIGHT from any entry of the side menu lands in the page, also where the top
         // of the page is the billboard (nothing to focus at the height of the menu entry)
         .focusSection()
@@ -149,8 +150,15 @@ struct MainView: View {
         railReady = false
         try? await Task.sleep(nanoseconds: 900_000_000)
         var waited = 0
+        var tried = 0
         while !Task.isCancelled && waited < 50 && rail == nil && FocusMemory.current == nil && app.playing == nil && app.sheets.isEmpty {
-            resetFocus(in: pageScope)
+            if waited % 2 == 0 {
+                resetFocus(in: pageScope)
+            } else {
+                // the page's first restorable button that appeared (top left: a chip, the first card)
+                let mine: [String] = FocusMemory.shown.filter { $0.section == app.section }.map { $0.key }
+                if !mine.isEmpty { FocusMemory.restore.send(mine[min(tried, mine.count - 1)]); tried += 1 }
+            }
             try? await Task.sleep(nanoseconds: 300_000_000)
             waited += 1
         }

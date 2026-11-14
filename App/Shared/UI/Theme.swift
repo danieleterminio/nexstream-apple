@@ -159,6 +159,17 @@ enum FocusMemory {
     /// Something drawn with `Focusable` has the focus now (nil: nothing of the pages and panels has it).
     static var current: String? = nil
     static let restore = PassthroughSubject<String, Never>()
+    /// The restorable buttons on screen, in the order they appeared, with the section whose page holds them: when
+    /// nothing has the focus (a page that filled in after the system looked for something to focus), the first one of
+    /// the page in view gets it.
+    private(set) static var shown: [(key: String, section: AppSection)] = []
+
+    static func appeared(_ key: String, _ section: AppSection?) {
+        guard let s = section else { return }
+        shown.removeAll { $0.key == key }
+        shown.append((key, s))
+    }
+    static func gone(_ key: String) { shown.removeAll { $0.key == key } }
 
     static func noteFocus(_ key: String?) { last = key; inRail = false }
     /// Puts the focus back on the element with that key, if it is still on screen, after `delay` seconds (the time for
@@ -174,17 +185,21 @@ enum FocusMemory {
 
 private struct NxRestoreKeyKey: EnvironmentKey { static let defaultValue: String? = nil }
 private struct NxFocusKeyKey: EnvironmentKey { static let defaultValue: String? = nil }
+private struct NxPageSectionKey: EnvironmentKey { static let defaultValue: AppSection? = nil }
 extension EnvironmentValues {
     /// The key of the restorable button around a label (read by `Focusable`).
     var nxRestoreKey: String? { get { self[NxRestoreKeyKey.self] } set { self[NxRestoreKeyKey.self] = newValue } }
     /// A fixed key asked from outside for the one restorable button inside (`nxFocusKey`).
     var nxFocusKey: String? { get { self[NxFocusKeyKey.self] } set { self[NxFocusKeyKey.self] = newValue } }
+    /// The section whose pages a view belongs to (Apple TV side menu sections).
+    var nxPageSection: AppSection? { get { self[NxPageSectionKey.self] } set { self[NxPageSectionKey.self] = newValue } }
 }
 
 /// A button that `FocusMemory` can give the focus back to.
 private struct NxRestorable: ViewModifier {
     var key: String? = nil
     @Environment(\.nxFocusKey) private var asked
+    @Environment(\.nxPageSection) private var section
     @State private var token = UUID().uuidString
     #if os(tvOS)
     @FocusState private var focused: Bool
@@ -197,6 +212,29 @@ private struct NxRestorable: ViewModifier {
             .environment(\.nxRestoreKey, k)
             .focused($focused)
             .onReceive(FocusMemory.restore) { t in if t == k { focused = true } }
+            .onAppear { FocusMemory.appeared(k, section) }
+            .onDisappear { FocusMemory.gone(k) }
+        #else
+        content
+        #endif
+    }
+}
+
+/// A text field (not drawn with `Focusable`) tells `FocusMemory` when it has the focus.
+private struct NxFocusMarker: ViewModifier {
+    @State private var fid = UUID().uuidString
+    #if os(tvOS)
+    @FocusState private var focused: Bool
+    #endif
+    func body(content: Content) -> some View {
+        #if os(tvOS)
+        content
+            .focused($focused)
+            .onChange(of: focused) { _, f in
+                if f { FocusMemory.noteFocus(nil); FocusMemory.current = fid }
+                else if FocusMemory.current == fid { FocusMemory.current = nil }
+            }
+            .onDisappear { if FocusMemory.current == fid { FocusMemory.current = nil } }
         #else
         content
         #endif
@@ -204,6 +242,8 @@ private struct NxRestorable: ViewModifier {
 }
 
 extension View {
+    /// Apple TV: a text field reports its focus, so the page is not thought to have lost it.
+    func nxFocusMarker() -> some View { modifier(NxFocusMarker()) }
     /// Lets the focus come back to this button (Apple TV); `key`: a fixed name, for views that are built again.
     func nxRestorable(_ key: String? = nil) -> some View { modifier(NxRestorable(key: key)) }
     /// Gives the restorable button inside a fixed name.
