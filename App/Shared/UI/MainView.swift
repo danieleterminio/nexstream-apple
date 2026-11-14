@@ -155,8 +155,8 @@ struct MainView: View {
             if waited % 2 == 0 {
                 resetFocus(in: pageScope)
             } else {
-                // the page's first restorable button that appeared (top left: a chip, the first card)
-                let mine: [String] = FocusMemory.shown.filter { $0.section == app.section }.map { $0.key }
+                // the page's first button on screen (top left: a chip, the first card)
+                let mine: [String] = FocusMemory.onScreen(app.section)
                 if !mine.isEmpty { FocusMemory.restore.send(mine[min(tried, mine.count - 1)]); tried += 1 }
             }
             try? await Task.sleep(nanoseconds: 300_000_000)

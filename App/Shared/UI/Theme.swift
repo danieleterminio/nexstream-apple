@@ -169,7 +169,23 @@ enum FocusMemory {
         shown.removeAll { $0.key == key }
         shown.append((key, s))
     }
-    static func gone(_ key: String) { shown.removeAll { $0.key == key } }
+    static func gone(_ key: String) { shown.removeAll { $0.key == key }; frames[key] = nil }
+    /// Where each restorable button is on screen.
+    static var frames: [String: CGRect] = [:]
+
+    /// The restorable buttons of a section's page that are on screen, top to bottom, left to right.
+    static func onScreen(_ section: AppSection) -> [String] {
+        let screen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let mine: [(String, CGRect)] = shown.filter { $0.section == section }.compactMap { e in
+            guard let f = frames[e.key], f.width > 0, screen.intersects(f) else { return nil }
+            return (e.key, f)
+        }
+        let sorted = mine.sorted { a, b in
+            let ya = (a.1.minY / 40).rounded(), yb = (b.1.minY / 40).rounded()
+            return ya != yb ? ya < yb : a.1.minX < b.1.minX
+        }
+        return sorted.map { $0.0 }
+    }
 
     static func noteFocus(_ key: String?) { last = key; inRail = false }
     /// Puts the focus back on the element with that key, if it is still on screen, after `delay` seconds (the time for
@@ -213,6 +229,7 @@ private struct NxRestorable: ViewModifier {
             .focused($focused)
             .onReceive(FocusMemory.restore) { t in if t == k { focused = true } }
             .onAppear { FocusMemory.appeared(k, section) }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { f in FocusMemory.frames[k] = f }
             .onDisappear { FocusMemory.gone(k) }
         #else
         content
