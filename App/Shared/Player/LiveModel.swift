@@ -185,6 +185,8 @@ final class LivePlayerModel: ObservableObject {
         tune(zapIds[((i + delta) % n + n) % n])
     }
     var zapChannels: [ChannelEntity] { zapIds.compactMap { core.channels.get($0) } }
+    /// The ids up / down move through, in order (no database reads: the TV's zap banner asks at every key).
+    var zapList: [String] { zapIds }
     var currentId: String { current }
 
     func togglePause() {

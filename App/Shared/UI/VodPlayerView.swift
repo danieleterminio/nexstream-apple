@@ -44,8 +44,8 @@ struct VodPlayerView: View {
         .onAppear { chrome.show() }
         .onReceive(NotificationCenter.default.publisher(for: .nxRemoteKey)) { n in
             #if os(tvOS)
-            // while the video plays TvVodLayer takes the keys; on the other screens BACK leaves
-            if model.phase != .playing && (n.object as? String) == "back" { app.closePlayer() }
+            // while the video plays TvVodLayer takes the keys; the other screens are two buttons at most
+            if model.phase != .playing { phaseKey(n.object as? String ?? "") }
             #else
             switch n.object as? String {
             case "playpause", "ok": model.togglePlay(); chrome.show()
@@ -84,6 +84,43 @@ struct VodPlayerView: View {
         #else
         .background(VolumeHook().frame(width: 1, height: 1).opacity(0.02))
         #endif
+    }
+
+    #if os(tvOS)
+    /// Phone remote on the resolving / failed / ended / still-watching screens: left / right between the two buttons,
+    /// ok presses the one in focus, BACK leaves the player.
+    private var twoButtons: Bool {
+        switch model.phase {
+        case .failed, .stillWatching: return true
+        case .ended: return model.nextRequest(auto: true) != nil
+        default: return false
+        }
+    }
+
+    private func phaseKey(_ k: String) {
+        let second = (phaseFocus ?? 0) == 1
+        switch k {
+        case "left": phaseFocus = 0
+        case "right": if twoButtons { phaseFocus = 1 }
+        case "back": app.closePlayer()
+        case "ok", "playpause":
+            switch model.phase {
+            case .resolving: app.closePlayer()
+            case .failed: if second { app.closePlayer() } else { model.start(retry: true) }
+            case .ended:
+                if !second, var n = model.nextRequest(auto: true) { n.auto = false; app.core.watchSession.touch(); app.play(n) } else { app.closePlayer() }
+            case .stillWatching:
+                if second { app.closePlayer() } else { continueWatching() }
+            case .playing: break
+            }
+        default: break
+        }
+    }
+    #endif
+
+    private func continueWatching() {
+        app.core.watchSession.touch()
+        if let n = model.nextRequest(auto: false) { app.play(n) } else { app.closePlayer() }
     }
 
     #if os(iOS)
@@ -266,6 +303,9 @@ struct VodPlayerView: View {
             backdrop(0.3)
             VStack(spacing: Metrics.u(full ? 12 : 6)) {
                 if let n = next {
+                    #if os(tvOS)
+                    nextStill(n)
+                    #endif
                     Text("Prossimo episodio").font(NxFont.label).tracking(1).foregroundStyle(NxColor.textDim)
                     Text("S\(n.season) E\(n.episode)" + (n.episodeTitle.map { " · \($0)" } ?? "")).font(full ? NxFont.titleL : NxFont.titleM).foregroundStyle(NxColor.text).multilineTextAlignment(.center).lineLimit(2)
                     if autoplay { Text("Parte tra \(countdown) secondi").font(NxFont.meta).foregroundStyle(NxColor.textMuted) }
@@ -304,6 +344,30 @@ struct VodPlayerView: View {
         }
     }
 
+    #if os(tvOS)
+    /// The next episode's picture on the end screen, with the seconds left before it starts.
+    @ViewBuilder private func nextStill(_ n: PlayRequest) -> some View {
+        let ep = model.episodes.first(where: { $0.seasonNumber == n.season && $0.episodeNumber == n.episode })
+        let autoplay = app.core.settings.autoplay(app.pid)
+        ZStack {
+            NxImage(url: Img.tmdb(ep?.stillPath ?? model.details.bestBackdrop ?? model.details.backdropPath, "w780"), maxPixel: 900) { NxColor.ink3 }
+                .frame(width: 560, height: 315)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            if autoplay {
+                ZStack {
+                    Circle().stroke(Color.white.opacity(0.3), lineWidth: 6)
+                    Circle().trim(from: 0, to: CGFloat(countdown) / 10).stroke(Color.white, style: StrokeStyle(lineWidth: 6, lineCap: .round)).rotationEffect(.degrees(-90))
+                    Text("\(countdown)").font(NxFont.display(22, .bold)).foregroundStyle(.white).monospacedDigit()
+                }
+                .frame(width: 110, height: 110)
+                .background(Color.black.opacity(0.55), in: Circle())
+                .animation(.linear(duration: 1), value: countdown)
+            }
+        }
+        .padding(.bottom, 10)
+    }
+    #endif
+
     /// "Stai ancora guardando?": playback stays stopped until the viewer answers.
     private var stillWatching: some View {
         ZStack {
@@ -311,10 +375,7 @@ struct VodPlayerView: View {
             VStack(spacing: Metrics.u(full ? 12 : 8)) {
                 Text("Stai ancora guardando?").font(full ? NxFont.titleXL : NxFont.titleM).foregroundStyle(NxColor.text)
                 HStack(spacing: Metrics.u(10)) {
-                    NxButton("Continua", icon: "play.fill", kind: .primary) {
-                        app.core.watchSession.touch()
-                        if let n = model.nextRequest(auto: false) { app.play(n) } else { app.closePlayer() }
-                    }
+                    NxButton("Continua", icon: "play.fill", kind: .primary) { continueWatching() }
                     .tvPhaseFocus($phaseFocus, 0)
                     NxButton("Esci", kind: .secondary) { app.closePlayer() }
                         .tvPhaseFocus($phaseFocus, 1)

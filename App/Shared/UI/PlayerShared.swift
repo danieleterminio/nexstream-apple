@@ -15,11 +15,17 @@ final class ChromeState: ObservableObject {
         task?.cancel()
         guard auto else { return }
         task = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 4_500_000_000)
+            try? await Task.sleep(nanoseconds: ChromeState.autoHideNs)
             if Task.isCancelled { return }
             withAnimation(.easeOut(duration: 0.25)) { self?.visible = false }
         }
     }
+    /// The controls leave after this long without input: 5 s on the TV (docs/tv-experience.md), 4.5 s on the phone.
+    #if os(tvOS)
+    static let autoHideNs: UInt64 = 5_000_000_000
+    #else
+    static let autoHideNs: UInt64 = 4_500_000_000
+    #endif
     func hide() { task?.cancel(); withAnimation(.easeOut(duration: 0.2)) { visible = false } }
     func toggle() { if visible { hide() } else { show() } }
 }

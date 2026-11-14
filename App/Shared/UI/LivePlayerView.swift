@@ -1,11 +1,8 @@
 import SwiftUI
-#if os(tvOS)
-import Combine
-#endif
 
 /// The live player. Phone upright: the channel on top, what it is showing and the other channels under it. Phone on its
-/// side: full screen, a swipe up or down changes channel. Apple TV: up / down change channel, select shows the info,
-/// left opens the channel list, right the options; the panels are drawn inside the player, BACK closes the top one.
+/// side: full screen, a swipe up or down changes channel. Apple TV: drawn by `TvLiveLayer` (TvLivePlayer.swift): up / down
+/// zap, select shows the info bar and its options, left the channel list, right the guide, BACK closes the top layer.
 struct LivePlayerView: View {
     @ObservedObject var model: LivePlayerModel
     @ObservedObject var player: NxPlayer
@@ -15,11 +12,6 @@ struct LivePlayerView: View {
     @EnvironmentObject var store: LiveStore
     @StateObject private var chrome = ChromeState()
     @State private var genre = "all"
-    #if os(tvOS)
-    @FocusState private var focused: Bool
-    @State private var panel: TvPanel? = nil
-    @State private var keys = PassthroughSubject<String, Never>()
-    #endif
 
     init(model: LivePlayerModel, full: Bool, width: CGFloat) {
         self.model = model
@@ -39,11 +31,9 @@ struct LivePlayerView: View {
             #endif
         }
         .onAppear { chrome.show() }
+        #if os(iOS)
         .onChange(of: model.currentId) { _, _ in chrome.show() }
         .onReceive(NotificationCenter.default.publisher(for: .nxRemoteKey)) { n in
-            #if os(tvOS)
-            tvKey(n.object as? String ?? "")
-            #else
             switch n.object as? String {
             case "playpause": model.togglePause()
             case "chup", "up": model.zap(1)
@@ -54,8 +44,8 @@ struct LivePlayerView: View {
             case "left": channelList()
             default: break
             }
-            #endif
         }
+        #endif
     }
 
     private var video: some View {
@@ -73,17 +63,14 @@ struct LivePlayerView: View {
                 .padding(.top, Metrics.u(full ? 60 : 44))
             }
             #if os(tvOS)
-            tvLayer
-            if let e = model.error, panel == nil { errorPanel(e) }
+            TvLiveLayer(model: model, player: player, chrome: chrome)
             #else
             if let e = model.error { errorPanel(e) }
             else if chrome.visible { controls.transition(.opacity) }
             #endif
         }
         .clipped()
-        #if os(tvOS)
-        .animation(.easeOut(duration: 0.2), value: panel)
-        #else
+        #if os(iOS)
         .contentShape(Rectangle())
         .onTapGesture { chrome.toggle() }
         .simultaneousGesture(DragGesture(minimumDistance: 40).onEnded { g in
@@ -271,127 +258,6 @@ struct LivePlayerView: View {
             }
         }
     }
-
-    // MARK: Apple TV
-
-    #if os(tvOS)
-    /// An invisible button over the picture has the focus, so select reaches it; the panels are drawn here, each with its
-    /// own focus and BACK.
-    private var tvLayer: some View {
-        ZStack {
-            Button { chrome.toggle() } label: {
-                Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
-            }
-            .buttonStyle(NxPlainStyle(scale: 1))
-            .focused($focused)
-            .disabled(panel != nil || model.error != nil)
-            .onMoveCommand { dir in
-                switch dir {
-                case .up: model.zap(1)
-                case .down: model.zap(-1)
-                case .left: openPanel(.channels)
-                case .right: openPanel(.options)
-                default: break
-                }
-            }
-            .onExitCommand { tvBack() }
-            if model.error == nil && chrome.visible && panel == nil { controls.transition(.opacity) }
-            if let p = panel { tvPanel(p).transition(.opacity).zIndex(5) }
-        }
-        .onPlayPauseCommand { if panel == nil { model.togglePause(); chrome.show() } }
-        .onAppear { focused = true }
-        .task {
-            // build pipeline: `-nxPlayerPanel channels|options|tracks` opens that panel once the channel plays
-            guard let what = Demo.value("-nxPlayerPanel"), let p = TvPanel(rawValue: what) else { return }
-            try? await Task.sleep(nanoseconds: 9_000_000_000)
-            openPanel(p)
-        }
-        .onChange(of: model.error == nil) { _, ok in if ok && panel == nil { DispatchQueue.main.async { focused = true } } }
-    }
-
-    private func tvBack() {
-        if chrome.visible { chrome.hide() } else { app.closePlayer() }
-    }
-
-    private func openPanel(_ p: TvPanel) {
-        chrome.hide()
-        panel = p
-    }
-
-    private func closePanel() {
-        panel = nil
-        DispatchQueue.main.async { focused = true }
-    }
-
-    @ViewBuilder private func tvPanel(_ p: TvPanel) -> some View {
-        switch p {
-        case .channels:
-            TvListOverlay(title: "Canali", items: channelItems, keys: keys, onClose: closePanel)
-        case .options:
-            TvListOverlay(title: model.channel?.name ?? "Opzioni", items: optionItems, keys: keys, onClose: closePanel)
-        case .quality:
-            TvListOverlay(title: "Qualità", items: qualityItems, keys: keys, onClose: closePanel)
-        case .tracks:
-            TvTracksOverlay(player: model.player, keys: keys, onClose: closePanel)
-        default:
-            EmptyView()
-        }
-    }
-
-    private var channelItems: [TvListItem] {
-        let m = model
-        return m.zapChannels.map { c in
-            let s = store.showing(c)
-            let sub: String? = s.programme != nil || c.event != nil ? s.cardTitle : nil
-            return TvListItem(id: c.streamId, title: (c.num > 0 ? "\(c.num)  " : "") + c.name, sub: sub, selected: c.streamId == m.currentId) {
-                closePanel()
-                if c.streamId != m.currentId { m.tune(c.streamId) }
-            }
-        }
-    }
-
-    private var qualityItems: [TvListItem] {
-        model.variants().map { v in
-            let d = LivePlayerView.describe(v.1)
-            return TvListItem(id: v.0, title: d.0, sub: d.1, selected: v.0 == model.playing.0, badge: v.1.isEmpty ? nil : (v.1 == "UHD" ? "4K" : v.1)) {
-                closePanel()
-                model.tune(model.currentId, variant: v)
-            }
-        }
-    }
-
-    private var optionItems: [TvListItem] {
-        guard let c = model.channel else { return [] }
-        let fav = store.favorites.contains(c.streamId)
-        var a = [TvListItem]()
-        a.append(TvListItem(id: "tracks", title: "Audio e sottotitoli", icon: "captions.bubble") { panel = .tracks })
-        if model.variants().count > 1 { a.append(TvListItem(id: "quality", title: "Qualità", sub: model.playing.1 == "UHD" ? "4K" : model.playing.1, icon: "sparkles.tv") { panel = .quality }) }
-        a.append(TvListItem(id: "channels", title: "Lista dei canali", icon: "list.bullet") { panel = .channels })
-        a.append(TvListItem(id: "fav", title: fav ? "Togli dai preferiti" : "Aggiungi ai preferiti", icon: fav ? "star.slash" : "star") { app.toggleFavorite(c); closePanel() })
-        a.append(TvListItem(id: "details", title: "Dettagli del programma", icon: "info.circle") { panel = nil; details() })
-        a.append(TvListItem(id: "reconnect", title: "Ricollega il canale", sub: "Se l'immagine o l'audio hanno problemi", icon: "arrow.clockwise") { closePanel(); model.reconnectNow() })
-        a.append(TvListItem(id: "exit", title: "Esci dal canale", icon: "xmark") { app.closePlayer() })
-        return a
-    }
-
-    /// Keys from the phone remote.
-    private func tvKey(_ k: String) {
-        if panel != nil {
-            if k == "back" { closePanel() } else { keys.send(k) }
-            return
-        }
-        switch k {
-        case "playpause": model.togglePause(); chrome.show()
-        case "chup", "up": model.zap(1)
-        case "chdown", "down": model.zap(-1)
-        case "ok": chrome.toggle()
-        case "back": if model.error != nil { app.closePlayer() } else { tvBack() }
-        case "menu", "right": openPanel(.options)
-        case "left": openPanel(.channels)
-        default: break
-        }
-    }
-    #endif
 
     // MARK: portrait page
 

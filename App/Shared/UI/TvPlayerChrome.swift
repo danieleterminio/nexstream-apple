@@ -1,5 +1,6 @@
 #if os(tvOS)
 import SwiftUI
+import UIKit
 import Combine
 
 // The Apple TV player, drawn like Netflix on the Apple TV: nothing on the picture while it plays, any key brings the
@@ -61,6 +62,8 @@ struct TvVodLayer: View {
     @State private var flashTask: Task<Void, Never>? = nil
     @State private var lastOption = "tracks"
     @State private var keys = PassthroughSubject<String, Never>()
+    @State private var scrubBase: Millis = 0
+    @State private var scrubApply: Task<Void, Never>? = nil
     @FocusState private var focus: TvVodFocus?
 
     init(model: VodPlayerModel, player: NxPlayer, chrome: ChromeState) {
@@ -107,6 +110,7 @@ struct TvVodLayer: View {
         .onAppear { focus = .surface }
         .onChange(of: focus) { _, f in
             if f == .surface { chrome.show() }
+            if case .option(let id) = f { lastOption = id }
             if f == nil && panel == nil { DispatchQueue.main.async { if focus == nil && panel == nil { focus = .surface } } }
         }
         .onChange(of: creditsShown) { _, shown in
@@ -128,6 +132,33 @@ struct TvVodLayer: View {
         .disabled(panel != nil)
         .onMoveCommand { dir in move(dir) }
         .onExitCommand { back() }
+        .background(TvTouchPan(enabled: panel == nil && focus == .surface && model.duration > 0, onBegin: panBegin, onChange: panChange, onEnd: panEnd))
+    }
+
+    // MARK: touch surface
+
+    /// A swipe across the whole touch surface moves 10% of the length (at least 2 minutes); applied 500 ms after release.
+    private var swipeSpan: Millis { max(120_000, model.duration / 10) }
+
+    private func panBegin() {
+        scrubApply?.cancel()
+        scrubBase = model.position
+        chrome.show(auto: false)
+    }
+
+    private func panChange(_ x: CGFloat) {
+        let d = Millis(Double(x) / Double(TvTouchPan.fullSwipe) * Double(swipeSpan))
+        model.scrub(to: max(0, min(model.duration, scrubBase + d)))
+    }
+
+    private func panEnd(_ x: CGFloat) {
+        panChange(x)
+        chrome.show()
+        scrubApply = Task {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            if Task.isCancelled { return }
+            model.applySeek()
+        }
     }
 
     private func select() {
@@ -144,11 +175,17 @@ struct TvVodLayer: View {
         switch dir {
         case .left: seek(-1)
         case .right: seek(1)
-        case .down:
-            if showControls, let first = options.first { focus = .option(first.id); chrome.show(auto: false) } else { chrome.show() }
+        case .down: focusOptions()
         case .up: chrome.show()
         default: break
         }
+    }
+
+    /// DOWN (or the phone's menu key): the controls come up with the focus on the option row.
+    private func focusOptions() {
+        chrome.show(auto: false)
+        let id = options.contains(where: { $0.id == lastOption }) ? lastOption : (options.first?.id ?? "tracks")
+        DispatchQueue.main.async { focus = .option(id) }
     }
 
     private func seek(_ d: Int) {
@@ -357,8 +394,7 @@ struct TvVodLayer: View {
         case "left": seek(-1)
         case "right": seek(1)
         case "up": chrome.show()
-        case "down": chrome.show(); if let f = options.first, showControls { focus = .option(f.id) }
-        case "menu": chrome.show(auto: false); if let f = options.first { focus = .option(f.id) }
+        case "down", "menu": focusOptions()
         case "back": back()
         default: break
         }
@@ -366,7 +402,7 @@ struct TvVodLayer: View {
 
     // MARK: build pipeline
 
-    /// Launch argument `-nxPlayerPanel paused|seek|options|tracks|episodes|speed|source`: once the video plays, put the
+    /// Launch argument `-nxPlayerPanel paused|seek|options|tracks|episodes|speed|source|credits|ended|still|failed|hidden`: once the video plays, put the
     /// player in that state so the build pipeline can take its picture.
     private func demo() async {
         guard let what = Demo.value("-nxPlayerPanel") else { return }
@@ -391,6 +427,14 @@ struct TvVodLayer: View {
         case "episodes": open(.episodes, "episodes")
         case "speed": open(.speed, "speed")
         case "source": open(.source, "source")
+        case "credits":
+            // the credits prompt: jump to 50 s from the end of an episode that has a next one
+            model.seekTarget = max(0, model.duration - 50_000)
+            model.applySeek()
+        case "ended": model.phase = .ended
+        case "still": model.phase = .stillWatching
+        case "failed": model.phase = .failed("Ho provato tutte le fonti disponibili, ma nessuna riesce a riprodurre questo titolo adesso.")
+        case "hidden": chrome.hide()
         default: break
         }
     }
@@ -470,12 +514,14 @@ struct TvSeekBar: View {
 struct TvOptionButton: View {
     let icon: String
     let title: String
+    /// A toggle that is on (the live player's "Preferito"): its symbol turns gold.
+    var active: Bool = false
     let action: () -> Void
     var body: some View {
         Button(action: action) {
             Focusable { f in
                 HStack(spacing: 14) {
-                    Image(systemName: icon).font(.system(size: 26, weight: .semibold))
+                    Image(systemName: icon).font(.system(size: 26, weight: .semibold)).foregroundStyle(active && !f ? NxColor.gold : (f ? Color.black : Color.white))
                     Text(title).font(NxFont.ui(13, .bold)).lineLimit(1)
                 }
                 .foregroundStyle(f ? Color.black : Color.white)
@@ -575,7 +621,6 @@ struct TvListOverlay: View {
                 }
                 .padding(.vertical, 20).padding(.horizontal, 12)
             }
-            .scrollClipDisabled()
             .focusSection()
             .onAppear {
                 let start = items.first(where: { $0.selected })?.id ?? items.first?.id
@@ -662,7 +707,6 @@ struct TvTracksOverlay: View {
                 }
                 .padding(.vertical, 12).padding(.horizontal, 12)
             }
-            .scrollClipDisabled()
         }
         .frame(width: 640, alignment: .leading)
         .focusSection()
@@ -747,7 +791,6 @@ struct TvEpisodesOverlay: View {
                 }
                 .padding(.vertical, 12).padding(.horizontal, 12)
             }
-            .scrollClipDisabled()
         }
         .frame(width: 400, alignment: .leading)
         .focusSection()
@@ -780,9 +823,8 @@ struct TvEpisodesOverlay: View {
                             .id("e\(e.id)")
                     }
                 }
-                .padding(.vertical, 24).padding(.horizontal, 16)
+                .padding(.vertical, 24).padding(.horizontal, 26)
             }
-            .scrollClipDisabled()
             .onAppear {
                 guard let start = startEpisode() else { return }
                 proxy.scrollTo(start, anchor: .center)
@@ -894,6 +936,83 @@ struct TvEpisodeCard: View {
         }
         .foregroundStyle(f ? Color.black : Color.white)
         .frame(maxWidth: 1000, alignment: .leading)
+    }
+}
+
+// MARK: - touch surface
+
+/// The Siri Remote's touch surface: a horizontal swipe, reported as the distance travelled (points). The recogniser sits
+/// on the window, because the touches of the remote go to the focused view and its ancestors; it never cancels them,
+/// so the focus engine keeps working as usual.
+struct TvTouchPan: UIViewRepresentable {
+    /// The distance of a swipe across the whole surface.
+    static let fullSwipe: CGFloat = 1000
+    let enabled: Bool
+    let onBegin: () -> Void
+    let onChange: (CGFloat) -> Void
+    let onEnd: (CGFloat) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> HostView {
+        let v = HostView()
+        v.isUserInteractionEnabled = false
+        v.coordinator = context.coordinator
+        context.coordinator.parent = self
+        return v
+    }
+
+    func updateUIView(_ v: HostView, context: Context) { context.coordinator.parent = self }
+
+    static func dismantleUIView(_ v: HostView, coordinator: Coordinator) {
+        coordinator.pan.view?.removeGestureRecognizer(coordinator.pan)
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var parent: TvTouchPan?
+        private var started = false
+        lazy var pan: UIPanGestureRecognizer = {
+            let p = UIPanGestureRecognizer(target: self, action: #selector(handle(_:)))
+            p.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirect.rawValue)]
+            p.cancelsTouchesInView = false
+            p.delaysTouchesBegan = false
+            p.delaysTouchesEnded = false
+            p.delegate = self
+            return p
+        }()
+
+        @objc func handle(_ g: UIPanGestureRecognizer) {
+            guard let p = parent, let v = g.view else { return }
+            let t = g.translation(in: v)
+            switch g.state {
+            case .began:
+                started = false
+            case .changed:
+                if !started {
+                    guard p.enabled, abs(t.x) > 50, abs(t.x) > abs(t.y) * 1.5 else { return }
+                    started = true
+                    p.onBegin()
+                }
+                p.onChange(t.x)
+            case .ended, .cancelled, .failed:
+                if started { p.onEnd(t.x) }
+                started = false
+            default:
+                break
+            }
+        }
+
+        func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+    }
+
+    final class HostView: UIView {
+        weak var coordinator: Coordinator?
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            guard let c = coordinator else { return }
+            c.pan.view?.removeGestureRecognizer(c.pan)
+            window?.addGestureRecognizer(c.pan)
+        }
     }
 }
 #endif

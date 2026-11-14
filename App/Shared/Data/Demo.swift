@@ -40,6 +40,7 @@ enum Demo {
             core.db.replaceLive(cats, built)
         }
         core.db.setMeta("live_sync", String(Clock.now))
+        if args.contains("-nxDemoEpg") { seedEpg(core) }
         // -nxNoProfiles: the very first start, before any profile exists
         if core.db.profiles().isEmpty && !args.contains("-nxNoProfiles") {
             let id = core.profiles.add(name: "Daniele", color: 1, kids: false, icon: 0, maturity: 2, pin: nil)
@@ -64,5 +65,41 @@ enum Demo {
                                                   poster: "/ztkUQFLlC19CCMYHW9o1zWhJRNq.jpg", backdrop: nil, state: "queued", progress: 0, bytes: 0, file: nil))
         }
         if !args.contains("-nxPicker"), core.profiles.current.value == nil, let p = core.db.profiles().first { core.profiles.select(p) }
+    }
+
+    /// `-nxDemoEpg`: a made-up guide for the demo channels (from 3 h ago to 12 h ahead), so the live player's info bar,
+    /// zap banner, channel list, guide and programme panels have something to show on the build machines.
+    static func seedEpg(_ core: NexCore) {
+        let shows: [(String, String, String, String)] = [
+            ("Il commissario Montalbano", "series", "Serie TV", "Montalbano indaga sulla scomparsa di un anziano professore: una vecchia fotografia lo porta lontano da Vigata."),
+            ("Tg1", "news", "Notiziario", "Il telegiornale con le notizie del giorno, gli approfondimenti e il meteo."),
+            ("Inter - Juventus", "sport", "Serie A", "Il derby d'Italia in diretta dallo stadio Meazza, con il pre partita e le interviste."),
+            ("Interstellar", "movie", "Film", "Un gruppo di esploratori viaggia attraverso un wormhole alla ricerca di un nuovo pianeta per l'umanità."),
+            ("Pechino Express", "show", "Intrattenimento", "Le coppie in gara attraversano l'Asia con un euro al giorno: oggi la tappa più lunga."),
+            ("Superquark", "doc", "Documentario", "Piero Angela racconta la scienza: le stelle di neutroni, il sonno degli animali e la memoria."),
+            ("Masterchef Italia", "show", "Intrattenimento", "La prova in esterna mette alla prova la brigata: cento coperti in una masseria pugliese."),
+            ("Gomorra - La serie", "series", "Serie TV", "Genny deve scegliere da che parte stare mentre Secondigliano torna a bruciare."),
+        ]
+        let now = Clock.now
+        let slot = 30 * Clock.minute
+        var chans = [ChannelEntity]()
+        var progs = [ProgrammeEntity]()
+        for (i, c) in core.db.channels().enumerated() {
+            var x = c
+            let e = c.epgId ?? "demo.\(c.streamId)"
+            x.epgId = e
+            chans.append(x)
+            var t = now - now % slot - Millis(i % 4 + 1) * 15 * Clock.minute - 3 * Clock.hour
+            var j = i
+            while t < now + 12 * Clock.hour {
+                let s = shows[j % shows.count]
+                let len = Millis([45, 60, 90, 120, 30][(j * 7 + i) % 5]) * Clock.minute
+                progs.append(ProgrammeEntity(epgId: e, start: t, stop: t + len, title: s.0, desc: s.3, category: s.2, kind: s.1, live: s.1 == "sport", src: "demo"))
+                t += len
+                j += 1
+            }
+        }
+        core.db.replaceLive(core.db.categories("live"), chans)
+        core.db.replaceProgrammes(progs)
     }
 }
