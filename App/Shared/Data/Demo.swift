@@ -67,6 +67,9 @@ enum Demo {
             core.db.upsertDownload(DownloadEntity(id: "tv-1396-1-4", profileId: pid, tmdbId: 1396, media: "tv", season: 1, episode: 4, title: "Breaking Bad", sub: "S1 E4 · Cancer Man",
                                                   poster: "/ztkUQFLlC19CCMYHW9o1zWhJRNq.jpg", backdrop: nil, state: "queued", progress: 0, bytes: 0, file: nil))
         }
+        // UI tests: the end-of-episode screen without the 10 s countdown (-nxNoAutoplay); every other demo run has it on
+        // (the setting would otherwise carry over from one test launch to the next)
+        for p in core.db.profiles() { core.settings.setAutoplay(p.id, !args.contains("-nxNoAutoplay")) }
         if !args.contains("-nxPicker"), core.profiles.current.value == nil, let p = core.db.profiles().first { core.profiles.select(p) }
     }
 

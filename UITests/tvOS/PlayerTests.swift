@@ -66,7 +66,7 @@ final class VodPlayerTests: NxUITestCase {
         XCTAssertTrue(el("player.controls").waitForExistence(timeout: 3), "UP should show the controls")
         press(.down, wait: 1.0)
         snap("option-row")
-        XCTAssertTrue(focusedId.hasPrefix("player.option."), "DOWN should focus the option row, \(focusInfo)")
+        XCTAssertEqual(focusedId, "player.option.tracks", "DOWN should focus the option row on Audio e sottotitoli, \(focusInfo)")
         XCTAssertTrue(labelled("Audio e sottotitoli").exists || el("player.option.tracks").exists, "no 'Audio e sottotitoli' in the option row")
         press(.up, wait: 1.0)
         snap("back-to-bar")
@@ -88,10 +88,15 @@ final class VodPlayerTests: NxUITestCase {
         openVod()
         press(.up, wait: 1.0)
         press(.down, wait: 1.0)
+        // the row starts on the last option used; walk both ways to "Audio e sottotitoli"
         var found = false
-        for _ in 0..<6 {
-            if focusedId == "player.option.tracks" || focusedLabel == "Audio e sottotitoli" { found = true; break }
-            press(.right, wait: 0.6)
+        for dir in [XCUIRemote.Button.left, .right] where !found {
+            for _ in 0..<6 {
+                if focusedId == "player.option.tracks" || focusedLabel == "Audio e sottotitoli" { found = true; break }
+                let before = focusedId
+                press(dir, wait: 0.6)
+                if focusedId == before { break }
+            }
         }
         snap("on-tracks")
         XCTAssertTrue(found, "could not focus 'Audio e sottotitoli', \(focusInfo)")

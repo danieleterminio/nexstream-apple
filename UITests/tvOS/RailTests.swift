@@ -41,7 +41,7 @@ final class RailTests: NxUITestCase {
         snap("after-select-\(s)")
         assertAlive("select on rail.\(s)")
         XCTAssertTrue(el("section.\(s)").waitForExistence(timeout: 8), "section.\(s) is not shown after select")
-        XCTAssertTrue(wait(5) { !railFocused && focusedId != "" }, "the focus did not move into the page of \(s), \(focusInfo)")
+        XCTAssertTrue(wait(5) { !railFocused && focused.exists }, "the focus did not move into the page of \(s), \(focusInfo)")
         XCTAssertTrue(focusInside("section.\(s)"), "the focus is not inside the page of \(s), \(focusInfo)")
         // back into the rail: BACK on a section root (spec 2), else LEFT
         back(wait: 1.2)

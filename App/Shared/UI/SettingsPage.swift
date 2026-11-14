@@ -181,6 +181,17 @@ private struct SettingsSplit: View {
     @FocusState private var firstRow: Bool
     /// The row that opened the choice list: picking a value or BACK puts the focus back on it.
     @State private var returnKey: String? = nil
+    @Environment(\.nxPageSection) private var section
+
+    /// BACK inside the settings: a choice → its row; the rows → the categories. False on the categories (the side menu
+    /// comes next).
+    private func backStep() -> Bool {
+        if choice != nil { choice = nil; backToRow(); return true }
+        #if os(tvOS)
+        if category == nil { category = selected; return true }
+        #endif
+        return false
+    }
 
     private func backToRow() {
         FocusMemory.restore(returnKey ?? SettingsRows.firstKey, after: 0.12)
@@ -202,14 +213,15 @@ private struct SettingsSplit: View {
                 #if os(tvOS)
                 .focusSection()
                 // BACK: a choice → its rows; the rows → the categories (from there the side menu)
-                .onExitCommand {
-                    if choice != nil { choice = nil; backToRow() } else { category = selected }
-                }
+                .onExitCommand { _ = backStep() }
                 #endif
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         #if os(tvOS)
         .defaultFocus($category, selected)
+        // the section's BACK asks this first (Impostazioni as the root of its section)
+        .onAppear { if let s = section { app.pageBack[s] = backStep } }
+        .onDisappear { if let s = section { app.pageBack[s] = nil } }
         #endif
         .task {
             // build pipeline, with -nxSettingsChoice: the choice list closes as BACK does, the focus goes on its row

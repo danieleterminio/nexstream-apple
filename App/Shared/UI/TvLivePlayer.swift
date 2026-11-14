@@ -95,10 +95,10 @@ struct TvLiveLayer: View {
     var body: some View {
         ZStack {
             surface
-            if infoShown { infoLayer.transition(.opacity) }
-            if bannerVisible { zapBanner.transition(.opacity.combined(with: .move(edge: .bottom))) }
-            if errorShown { errorLayer.transition(.opacity) }
-            if let p = panel { panelView(p).zIndex(5) }
+            if infoShown { infoLayer.accessibilityElement(children: .contain).accessibilityIdentifier("player.controls").transition(.opacity) }
+            if bannerVisible { zapBanner.accessibilityElement(children: .contain).accessibilityIdentifier("player.zap").transition(.opacity.combined(with: .move(edge: .bottom))) }
+            if errorShown { errorLayer.accessibilityElement(children: .contain).accessibilityIdentifier("player.error").transition(.opacity) }
+            if let p = panel { panelView(p).accessibilityElement(children: .contain).accessibilityIdentifier("player.panel.\(p.rawValue)").zIndex(5) }
         }
         .animation(.easeOut(duration: 0.2), value: panel)
         .animation(.easeOut(duration: 0.2), value: infoShown)
@@ -134,6 +134,7 @@ struct TvLiveLayer: View {
         }
         .buttonStyle(NxPlainStyle(scale: 1))
         .focused($focus, equals: .surface)
+        .accessibilityIdentifier("player.surface")
         .disabled(panel != nil || model.error != nil)
         .onMoveCommand { dir in move(dir) }
         .onExitCommand { back() }
@@ -161,7 +162,9 @@ struct TvLiveLayer: View {
         chrome.show(auto: false)
         let opts = options
         let id = opts.contains(where: { $0.id == lastOption }) ? lastOption : (opts.first?.id ?? "channels")
+        // the row is only there once the info bar is drawn: ask again if the first request came too early
         DispatchQueue.main.async { focus = .option(id) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { if panel == nil && model.error == nil && !optionFocused { focus = .option(id) } }
     }
 
     /// Play / pause: shows the info bar; when it is already up, pauses or resumes the channel.
@@ -337,10 +340,12 @@ struct TvLiveLayer: View {
             ForEach(options) { o in
                 TvOptionButton(icon: o.icon, title: o.title, active: o.active, action: o.action)
                     .focused($focus, equals: .option(o.id))
+                    .accessibilityIdentifier("player.option.\(o.id)")
             }
             Spacer(minLength: 0)
         }
         .focusSection()
+        .defaultFocus($focus, TvLiveFocus.option(lastOption), priority: .userInitiated)
         .onExitCommand { focus = .surface; chrome.show() }
     }
 
@@ -701,18 +706,38 @@ struct TvChannelsPanel: View {
         .frame(maxHeight: .infinity, alignment: .top)
     }
 
+    /// The category chips scroll sideways with the focus (the row is wider than the column) and fade out at the edges,
+    /// so a chip cut by the edge reads as "more this way".
     private var chips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                let gs = groups
-                ForEach(gs.indices, id: \.self) { i in
-                    TvChip(title: gs[i].1, icon: gs[i].0 == "fav" ? "star.fill" : nil, selected: gs[i].0 == group) { focusList() }
-                        .focused($focus, equals: "g:" + gs[i].0)
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    let gs = groups
+                    ForEach(gs.indices, id: \.self) { i in
+                        TvChip(title: gs[i].1, icon: gs[i].0 == "fav" ? "star.fill" : nil, selected: gs[i].0 == group) { focusList() }
+                            .focused($focus, equals: "g:" + gs[i].0)
+                            .id("g:" + gs[i].0)
+                            .accessibilityIdentifier("player.chip." + gs[i].0)
+                    }
                 }
+                .padding(.vertical, 10).padding(.horizontal, TvChannelsPanel.chipFade)
             }
-            .padding(.vertical, 10).padding(.horizontal, 4)
+            .mask(chipMask)
+            .padding(.horizontal, -TvChannelsPanel.chipFade)
+            .focusSection()
+            .onAppear { proxy.scrollTo("g:" + group, anchor: .center) }
+            .onChange(of: focus) { _, f in
+                guard let f = f, f.hasPrefix("g:") else { return }
+                withAnimation(.easeOut(duration: 0.18)) { proxy.scrollTo(f, anchor: .center) }
+            }
         }
-        .focusSection()
+    }
+
+    static let chipFade: CGFloat = 36
+
+    private var chipMask: some View {
+        let stops: [Gradient.Stop] = [.init(color: .clear, location: 0), .init(color: .black, location: 0.05), .init(color: .black, location: 0.93), .init(color: .clear, location: 1)]
+        return LinearGradient(stops: stops, startPoint: .leading, endPoint: .trailing)
     }
 
     private var rows: some View {
@@ -791,7 +816,7 @@ struct TvChip: View {
             Focusable { f in
                 HStack(spacing: 8) {
                     if let i = icon { Image(systemName: i).font(.system(size: 18, weight: .bold)) }
-                    Text(title).font(NxFont.ui(12, .bold)).lineLimit(1)
+                    Text(title).font(NxFont.ui(12, .bold)).lineLimit(1).fixedSize()
                 }
                 .foregroundStyle(f ? Color.black : .white)
                 .padding(.horizontal, 22).frame(height: 52)

@@ -186,7 +186,9 @@ struct TvVodLayer: View {
     private func focusOptions() {
         chrome.show(auto: false)
         let id = options.contains(where: { $0.id == lastOption }) ? lastOption : (options.first?.id ?? "tracks")
+        // the row is only there once the controls are drawn: ask again if the first request came too early
         DispatchQueue.main.async { focus = .option(id) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { if panel == nil && !optionFocused { focus = .option(id) } }
     }
 
     private func seek(_ d: Int) {
@@ -274,6 +276,8 @@ struct TvVodLayer: View {
             Spacer(minLength: 0)
         }
         .focusSection()
+        // DOWN from the bar enters the row on the last option used (Audio e sottotitoli at first), not the nearest one
+        .defaultFocus($focus, TvVodFocus.option(lastOption), priority: .userInitiated)
         .onExitCommand { focus = .surface }
     }
 

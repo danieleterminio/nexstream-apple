@@ -118,6 +118,12 @@ final class AppModel: ObservableObject {
     var sheetOrigins: [FocusOrigin] = []
     /// Apple TV: a panel opened from the side menu closed, the focus goes back to the menu.
     let railRestore = PassthroughSubject<Void, Never>()
+    /// Apple TV: BACK came with nothing focused on a section's page: the side menu takes the focus, on the section in view.
+    let railEnter = PassthroughSubject<Void, Never>()
+    /// Apple TV: a section's first page that has its own BACK steps (Impostazioni: choice → rows → categories). BACK on a
+    /// section root asks it first; it returns false when BACK should go on to the side menu. (A nested `onExitCommand`
+    /// inside the page does not get the press before the section's own, so the page registers here.)
+    var pageBack: [AppSection: () -> Bool] = [:]
     /// Set while `captureMenu` runs: `menu` hands its lines over instead of presenting them.
     var menuCapture: ((String?, [NxAction]) -> Void)? = nil
     @Published var pendingSearch: String? = nil
@@ -358,6 +364,16 @@ final class AppModel: ObservableObject {
     /// Started from the car screen: the phone keeps showing what it was showing.
     @Published var playerHidden = false { didSet { if playerHidden && cellularAsk { acceptCellular() } } }
     /// Back to the first page of Home (the phone remote's Home key).
+    /// Apple TV, BACK while nothing has the focus (`BackGuard`): the same step BACK would take from the focused element,
+    /// never out of the app.
+    func backWithoutFocus() {
+        NxLog.i("NxFocus", "BACK with nothing focused")
+        if !sheets.isEmpty { dismissSheet(); return }
+        if playing != nil { closePlayer(); return }
+        if profile == nil || session == nil || !vpn || onboardingFor != nil { askExit(); return }
+        if !(paths[section] ?? []).isEmpty { pop(); return }
+        railEnter.send(())
+    }
     func goHome() { closePlayer(); paths = [:]; section = .home }
     /// "Riproduci" on a title: from where it was left, or the first episode.
     func playTitle(_ d: TmdbDetails) { play(core.resumeFor(pid, d)) }

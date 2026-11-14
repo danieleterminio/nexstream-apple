@@ -71,6 +71,7 @@ struct RootView: View {
             #if os(tvOS)
             RemoteHost.shared.start()
             TopShelfHook.start()
+            BackGuard.install()
             #else
             app.core.downloads.wake()
             #endif

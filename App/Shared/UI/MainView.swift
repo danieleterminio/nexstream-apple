@@ -26,6 +26,8 @@ struct MainView: View {
     @State private var pushOrigins: [AppSection: [String?]] = [:]
     /// What had the focus when the player opened.
     @State private var playOrigin: String? = nil
+    /// A section was chosen in the side menu: once its page is there, the focus leaves the menu for it.
+    @State private var toPage = false
     static let tabs: [AppSection] = [.search, .home, .live, .guide, .movies, .series, .mine, .settings]
     #else
     static let tabs: [AppSection] = [.home, .movies, .series, .live, .mine]
@@ -56,6 +58,7 @@ struct MainView: View {
         .onChange(of: rail) { old, new in railMoved(old, new) }
         .onChange(of: app.paths) { old, new in pathsChanged(old, new) }
         .onReceive(app.railRestore) { _ in backToRail() }
+        .onReceive(app.railEnter) { _ in enterRail(app.section) }
         .task(id: railPulse) { await settle() }
         .task { await demoRail() }
         .task { await demoFocusTest() }
@@ -126,7 +129,7 @@ struct MainView: View {
         // of the page is the billboard (nothing to focus at the height of the menu entry)
         .focusSection()
         // BACK (Android: the same chain): a page → the one before (the stack does it), a section → the side menu
-        .onExitCommand(perform: (app.paths[s] ?? []).isEmpty ? { enterRail(s) } : nil)
+        .onExitCommand(perform: (app.paths[s] ?? []).isEmpty ? { if app.pageBack[s]?() != true { enterRail(s) } } : nil)
         #endif
     }
 
@@ -136,7 +139,7 @@ struct MainView: View {
     /// Select on a menu entry: another section opens (the focus goes into it); the section in view goes back to its
     /// first page and the focus into it.
     private func select(_ s: AppSection) {
-        if app.section != s { app.section = s; return }
+        if app.section != s { toPage = true; app.section = s; return }
         let wasRoot = (app.paths[s] ?? []).isEmpty
         app.paths[s] = []
         app.reselect += 1
@@ -149,7 +152,17 @@ struct MainView: View {
     /// the page is asked again for its first element. After 15 s the menu opens up anyway.
     private func settle() async {
         railReady = false
-        try? await Task.sleep(nanoseconds: 900_000_000)
+        if toPage {
+            // select on a menu entry: the focus goes into the section as soon as its page has something to focus
+            toPage = false
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            if Task.isCancelled { return }
+            rail = nil
+            resetFocus(in: pageScope)
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        } else {
+            try? await Task.sleep(nanoseconds: 900_000_000)
+        }
         var waited = 0
         var tried = 0
         while !Task.isCancelled && waited < 50 && rail == nil && FocusMemory.current == nil && app.playing == nil && app.sheets.isEmpty {
