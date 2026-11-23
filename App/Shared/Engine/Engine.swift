@@ -45,6 +45,47 @@ struct PlayResponse: Codable {
     var server: String?
     var tried: [Tried]?
     var all: [Playable]?
+    /// Id of the source row (the same id the source picker lists) and its Stream4Me channel.
+    var source: String?
+    var channel: String?
+    /// source_play only: the search hit the source belongs to (kept as the title's cached source).
+    struct Hit: Codable { var channel: String?; var item: String?; var title: String? }
+    var hit: Hit?
+    var error: String?
+}
+
+/// "Cambia fonte": one source of a film / episode (site + server), checked in the background (nxbridge.sources_*).
+struct SourceRow: Codable, Identifiable, Equatable {
+    var id: String
+    var channel: String?
+    var site: String?
+    var server: String?
+    var host: String?
+    /// The site's own quality tag, if any ("HD", "SD").
+    var label: String?
+    var language: String?
+    /// listed → checking → ok | dead
+    var status: String?
+    /// What the link really carries, once checked: "4K" | "FHD" | "HD" | "SD" | "" (playable, size unknown).
+    var quality: String?
+    var codec: String?
+    var width: Int?
+    var height: Int?
+    var bitrate: Int?
+    var note: String?
+    var dead: Bool { status == "dead" }
+    var checked: Bool { status == "ok" || status == "dead" }
+    var siteName: String { (site ?? "").isEmpty ? (channel ?? "") : (site ?? "") }
+    var hostName: String { (host ?? "").isEmpty ? (server ?? "") : (host ?? "") }
+}
+
+struct SourcesSnapshot: Codable, Equatable {
+    var job: String?
+    var state: String?
+    var elapsed: Double?
+    var sources: [SourceRow]?
+    var rows: [SourceRow] { sources ?? [] }
+    var finished: Bool { state == "done" || state == "gone" }
 }
 
 struct EngineChannelInfo: Codable {
@@ -151,6 +192,12 @@ final class Engine {
     func episodes(_ item: String) async throws -> [EpisodeHit] { try decode([EpisodeHit].self, try await call("episodes", [item])) }
 
     func play(_ item: String) async throws -> PlayResponse { try decode(PlayResponse.self, try await call("play", [item])) }
+
+    /// Starts (or reuses, for 20 minutes) the listing of every source of a title; `requestJson` as in nxbridge.sources_start.
+    func sourcesStart(_ requestJson: String) async throws -> SourcesSnapshot { try decode(SourcesSnapshot.self, try await call("sources_start", [requestJson])) }
+    func sourcesPoll(_ job: String) async throws -> SourcesSnapshot { try decode(SourcesSnapshot.self, try await call("sources_poll", [job])) }
+    /// The links of one listed source, best first (same shape as `play`).
+    func sourcePlay(_ job: String, _ id: String) async throws -> PlayResponse { try decode(PlayResponse.self, try await call("source_play", [job, id])) }
 
     /// Re-reads the addon tree after an update. Returns the number of channels found (0 = the new tree does not load).
     func reload() async throws -> Int {

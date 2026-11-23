@@ -7,6 +7,8 @@ struct ResolvedStream: Hashable {
     var server: String
     var channel: String
     var alternates: [Playable] = []
+    /// The row of the source picker this stream comes from (nxbridge source id), "" when unknown.
+    var sourceId: String = ""
 }
 
 struct PlayRequest: Hashable, Identifiable {
@@ -92,7 +94,39 @@ final class PlaybackResolver {
         do { r = try await engine.play(item) } catch { NxLog.w("NxResolver", "\(hit.channel): play failed: \(error)"); retryable.insert(hit.item); return nil }
         guard let url = r.url else { NxLog.w("NxResolver", "\(hit.channel): no playable link"); retryable.insert(hit.item); return nil }
         NxLog.i("NxResolver", "play on \(hit.channel): server=\(r.server ?? "?") kind=\(r.kind ?? "?")")
-        return ResolvedStream(url: url, headers: r.headers ?? [:], kind: r.kind ?? "progressive", server: r.server ?? "", channel: hit.channel, alternates: r.all ?? [])
+        return ResolvedStream(url: url, headers: r.headers ?? [:], kind: r.kind ?? "progressive", server: r.server ?? "", channel: hit.channel, alternates: r.all ?? [], sourceId: r.source ?? "")
+    }
+
+    /// "Cambia fonte": starts (or reuses) the listing of every source of `req` in the engine; `probe` = also check each
+    /// one (real resolution, dead links). The player prefetches the list without checking, and checks when the panel opens.
+    func sources(_ req: PlayRequest, probe: Bool) async -> SourcesSnapshot? {
+        let d = req.details
+        var known = [[String: Any]]()
+        if let c = db.sourceCache(d.id, d.media) { known.append(["channel": c.channel, "item": c.item, "title": c.title]) }
+        let body: [String: Any] = [
+            "queries": [d.displayTitle, d.originalDisplayTitle].map { $0.trimmed }.filter { !$0.isBlank }.distinct,
+            "type": d.isTv ? "tvshow" : "movie", "year": d.year, "season": req.season, "episode": req.episode, "probe": probe, "known": known,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: body), let json = String(data: data, encoding: .utf8) else { return nil }
+        do { return try await engine.sourcesStart(json) } catch { NxLog.w("NxResolver", "sources_start failed: \(error)"); return nil }
+    }
+
+    func pollSources(_ job: String) async -> SourcesSnapshot? {
+        do { return try await engine.sourcesPoll(job) } catch { NxLog.w("NxResolver", "sources_poll failed: \(error)"); return nil }
+    }
+
+    /// The source the viewer picked: its links, and it becomes the title's cached source (the next start begins there).
+    func playSource(_ req: PlayRequest, job: String, row: SourceRow) async -> ResolvedStream? {
+        let r: PlayResponse
+        do { r = try await engine.sourcePlay(job, row.id) } catch { NxLog.w("NxResolver", "source_play failed: \(error)"); return nil }
+        guard let url = r.url else { NxLog.w("NxResolver", "\(row.siteName)/\(row.hostName): no link (\(r.error ?? "-"))"); return nil }
+        if let h = r.hit, let item = h.item, !item.isEmpty {
+            db.upsertSourceCache(SourceCacheEntity(tmdbId: req.details.id, media: req.details.media, channel: h.channel ?? row.channel ?? "", item: item, title: h.title ?? ""))
+        }
+        NxLog.i("NxResolver", "picked \(row.channel ?? "?")/\(row.server ?? "?") \(row.quality ?? "") kind=\(r.kind ?? "?")")
+        let server = (r.server ?? "").isEmpty ? (row.server ?? "") : (r.server ?? "")
+        let channel = (r.channel ?? "").isEmpty ? (row.channel ?? "") : (r.channel ?? "")
+        return ResolvedStream(url: url, headers: r.headers ?? [:], kind: r.kind ?? "progressive", server: server, channel: channel, alternates: r.all ?? [], sourceId: row.id)
     }
 }
 
