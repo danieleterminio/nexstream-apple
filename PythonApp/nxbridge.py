@@ -565,8 +565,8 @@ def _list_sources(job):
                                      'label': s.get('quality') or '', 'language': s.get('language') or '', 'status': 'listed',
                                      'quality': '', 'codec': '', 'width': 0, 'height': 0, 'bitrate': 0, 'note': ''})
                 job.rows.sort(key=lambda r: rank.get(r['id'], (99, 0)))
-    except Exception:
-        log.warning('listing: %s' % traceback.format_exc()[-300:])     # as_completed timed out: what came is kept
+    except Exception as e:      # as_completed timed out (a slow site): what came is kept
+        log.info('listing stopped after 40 s: %s' % e)
     finally:
         ex.shutdown(wait=False, cancel_futures=True)
     with job.lock:
