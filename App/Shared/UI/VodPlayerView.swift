@@ -65,7 +65,7 @@ struct VodPlayerView: View {
             // `-nxPlayerPanel credits|ended` on iPhone / iPad too (the Apple TV handles it in TvVodLayer.demo)
             if p == .playing, let what = Demo.value("-nxPlayerPanel"), what == "credits" || what == "ended", !Demo.playerPanelDone {
                 Demo.playerPanelDone = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + (NxIntro.done ? 4 : 9)) {
                     if what == "ended" { model.phase = .ended } else { model.seekTarget = max(0, model.duration - 50_000); model.applySeek() }
                 }
             }

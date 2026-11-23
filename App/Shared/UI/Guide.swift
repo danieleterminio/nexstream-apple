@@ -493,10 +493,11 @@ struct GuideView: View {
                 target = .head(ch)
             }
         }
-        for delay in [0.0, 0.1, 0.35] {
+        for delay in [0.0, 0.1, 0.35, 0.7] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                // only while nothing else took the focus on purpose: lost (nil), or still on the old cell
-                if focus == nil || focus == h { focus = target }
+                // only while nothing else took the focus on purpose: lost (nil), still on the old cell, or moved by
+                // the focus engine to another cell / the head of the same row when the old cell went away
+                if focus == nil || focus == h || (focus?.channel == h.channel && focus != target) { focus = target }
             }
         }
     }
@@ -513,4 +514,5 @@ extension Notification.Name {
 enum GuideFocus: Hashable {
     case head(String)
     case cell(String, Millis)
+    var channel: String { switch self { case .head(let c): return c; case .cell(let c, _): return c } }
 }

@@ -579,8 +579,9 @@ struct TvLiveLayer: View {
     private func demo() async {
         guard let what = Demo.value("-nxPlayerPanel"), !Demo.playerPanelDone else { return }
         Demo.playerPanelDone = true
+        // the opening plays first (it covers the player started at launch): count from its end
         for _ in 0..<60 {
-            if player.state == .playing { break }
+            if player.state == .playing && NxIntro.done { break }
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
         try? await Task.sleep(nanoseconds: 2_000_000_000)

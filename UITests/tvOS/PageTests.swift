@@ -39,6 +39,11 @@ final class PageTests: NxUITestCase {
         // the first row is "Continua a guardare" in the demo (those cards play straight away): one row down the cards
         // open their page
         press(.down, wait: 1.5)
+        // the demo Home order depends on what is on air: go down to the first row of title cards (live cards play)
+        var tries = 0
+        while tries < 5 && ["IN ONDA", "DIRETTA", "IN DIRETTA"].contains(where: { focusedLabel.uppercased().contains($0) }) {
+            press(.down, wait: 1.5); tries += 1
+        }
         let card = focusedLabel
         press(.select, wait: 4.0)
         snap("pushed")

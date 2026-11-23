@@ -30,12 +30,18 @@ final class ParityTests: NxUITestCase {
         XCTAssertGreaterThanOrEqual(f.minY, billboard - 30, "the focused card is under the billboard: \(f), \(focusInfo)")
         XCTAssertLessThanOrEqual(f.maxY, 1080, "the focused card is below the screen: \(f), \(focusInfo)")
         // the next row down is a long one (Top 10): there the card can travel to the left edge
-        press(.down, wait: 1.2)
-        snap("home-row4")
-        press(.right, 3, wait: 0.9)
-        pause(0.8)
+        // the demo Home order depends on what is on air: go down until a row is long enough for three moves right
+        // (a short row keeps its cards where they are)
+        var rowTries = 0
+        repeat {
+            press(.down, wait: 1.2)
+            snap("home-row\(4 + rowTries)")
+            press(.right, 3, wait: 0.9)
+            pause(0.8)
+            f = focusFrame
+            rowTries += 1
+        } while f.minX - rowLeft >= 170 && rowTries < 4
         snap("home-row4-right3")
-        f = focusFrame
         // a Top 10 poster has its big rank number before it (up to ~150 pt): the cell starts at the edge, the poster after
         XCTAssertLessThan(f.minX - rowLeft, 170, "the focused card should come to the row's left edge (x≈\(rowLeft)): \(f), \(focusInfo)")
         XCTAssertGreaterThan(f.minX, rowLeft - 40, "the focused card is cut on the left: \(f)")

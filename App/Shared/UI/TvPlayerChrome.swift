@@ -493,7 +493,8 @@ struct TvVodLayer: View {
         guard let what = Demo.value("-nxPlayerPanel"), !Demo.playerPanelDone else { return }
         Demo.playerPanelDone = true
         for _ in 0..<160 {
-            if player.state == .playing && model.duration > 0 { break }
+            // the opening plays first (it covers the player started at launch): count from its end
+            if player.state == .playing && model.duration > 0 && NxIntro.done { break }
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
         try? await Task.sleep(nanoseconds: 2_500_000_000)
