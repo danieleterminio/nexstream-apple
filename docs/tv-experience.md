@@ -44,6 +44,10 @@ The user preferred the 0.9 Android rail (git `887b208:app/src/main/java/app/nexs
 - Focus feedback: every focusable thing has a clearly visible focused state. Cards: scale 1.06 + 3 dp / 6 pt white
   border + slight shadow. Buttons and rows: white fill, black content. Nothing focusable without a visible state; no
   focus ever lands on something invisible or off screen (scroll to keep it visible, rows keep a 1-card lead).
+- Browsing pages (v1.4): the row under the remote comes up whole under the billboard (rows above leave entirely, never
+  half a row); the focused card comes to the row's left edge (page margin), one card per press. Guide cells: the white
+  frame is inside the cell, no zoom (never over the neighbours); cells under 3 min are slivers the focus skips; narrow
+  cells keep the first letters of the title.
 - Sounds: Apple TV keeps the system focus sounds. Android TV plays the system navigation sounds
   (`AudioManager.playSoundEffect(FX_FOCUS_NAVIGATION_UP/DOWN/LEFT/RIGHT)` on D-pad moves that move the focus,
   `FX_KEY_CLICK` on select), which respect the system "sounds" setting.
