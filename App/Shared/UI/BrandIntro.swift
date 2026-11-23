@@ -70,6 +70,7 @@ struct BrandIntro: View {
         .onAppear {
             NxIntro.running = true
             start = Date()
+            NxLog.i("NxIntro", "opening starts (reduce motion: \(reduce))")
             #if os(tvOS)
             focused = true
             #endif
@@ -78,6 +79,7 @@ struct BrandIntro: View {
             try? await Task.sleep(nanoseconds: UInt64(NxIntro.end * 1_000_000_000))
             NxIntro.running = false
             done = true
+            NxLog.i("NxIntro", String(format: "opening done after %.2f s", Date().timeIntervalSince(start)))
             onDone()
         }
         .onDisappear { NxIntro.running = false }

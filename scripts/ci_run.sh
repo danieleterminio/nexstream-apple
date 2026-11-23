@@ -21,8 +21,15 @@ run_one() { # label productdir device-regex
     local NAME="${SHOT%%:*}"; local REST="${SHOT#*:}"; local SECS="${REST%%:*}"; local ARGS="${REST#*:}"
     xcrun simctl terminate "$UDID" "$BUNDLE" > /dev/null 2>&1 || true
     IFS=' ' read -r -a ARGV <<< "$ARGS"
+    # a shot named vid*: a screen recording of the launch for SECS seconds instead of a still
+    local VPID=""
+    if [[ "$NAME" == vid* ]]; then
+      xcrun simctl io "$UDID" recordVideo --codec h264 --force "$OUT/$LABEL-$NAME.mp4" > /dev/null 2>&1 &
+      VPID=$!; sleep 2
+    fi
     xcrun simctl launch "$UDID" "$BUNDLE" "${ARGV[@]}" || echo "[$LABEL] launch failed"
     sleep "$SECS"
+    if [ -n "$VPID" ]; then kill -INT "$VPID" 2>/dev/null; wait "$VPID" 2>/dev/null; fi
     xcrun simctl io "$UDID" screenshot "$OUT/$LABEL-$NAME.png" > /dev/null 2>&1 || echo "[$LABEL] screenshot failed"
     if ! xcrun simctl spawn "$UDID" launchctl list 2>/dev/null | grep -q "$BUNDLE"; then
       echo "[$LABEL] app not running after shot $NAME"
