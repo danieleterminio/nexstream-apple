@@ -85,9 +85,9 @@ Reference implementation: Apple `App/Shared/UI/TvPlayerChrome.swift` + `VodPlaye
     checked in the background, dead ones are greyed "Non disponibile" and cannot be chosen. Focus starts on the source
     playing and follows it while lines arrive until the user moves; the panel never closes by itself (the bar and the
     option row behind it cannot take the focus while a panel is open); select plays from the same position; BACK closes.
-- **Prossimo episodio** (v1.4, all platforms): when the credits buttons appear, "Prossimo episodio" (focused) fills up
-  over 5 s and plays the next episode; any other key / touch stops the countdown; "Guarda i titoli di coda" dismisses
-  the buttons. The end-of-episode screen also counts 5 s. Both respect the autoplay setting.
+- **Prossimo episodio** (v1.4, all platforms): when the credits buttons appear, "Prossimo episodio" (focused) fills with brand red (#E5173F) from the left
+  over 5 s, white label over the red part, and plays the next episode; any other key / touch stops the countdown; "Guarda i titoli di coda" dismisses
+  the buttons. The end-of-episode screen also counts 5 s ("Guarda ora" fills red the same way). Both respect the autoplay setting.
 - States: loading (backdrop + logo animation + status + "Annulla" focused), error ("Riprova" focused, "Chiudi"),
   end of episode (next episode card with countdown, "Guarda ora" focused, BACK = close), "Stai ancora guardando?"
   ("Continua" focused), credits prompt ("Prossimo episodio" focused, "Titoli di coda").
