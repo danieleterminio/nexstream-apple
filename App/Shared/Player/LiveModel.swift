@@ -247,8 +247,12 @@ final class LivePlayerModel: ObservableObject {
             // the stream's audio / subtitle languages are known once it plays
             if healthy == 3 { let p = core.prefs.values.value; player.preferAudio(p.preferredAudio); player.preferSubtitle(p.preferredText) }
         } else { healthy = 0 }
-        // a channel that was playing gets 8 s to move again; one that is still starting gets 20 s
-        if t - lastProgressAt > (started ? 8_000 : 20_000) {
+        // the proxy is opening the line again by itself (the player keeps its buffer): say so, and give it the time
+        if player.upstreamRecovering && !moving && note == nil { note = "Segnale interrotto, mi ricollego…" }
+        // a channel that was playing gets 8 s to move again (30 s while the proxy reconnects: it gives up by itself
+        // after 25 s and the stream then ends here); one that is still starting gets 20 s
+        let limit: Millis = started ? (player.upstreamRecovering ? 30_000 : 8_000) : 20_000
+        if t - lastProgressAt > limit {
             if lastFailure == nil { lastFailure = "Il canale non manda più dati." }
             lastProgressAt = t; lastFrameAt = t
             reconnect()

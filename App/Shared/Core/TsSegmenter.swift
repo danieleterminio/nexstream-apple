@@ -7,6 +7,8 @@ final class TsSegmenter {
         let seq: Int
         let data: Data
         let duration: Double
+        /// The first segment after the stream was opened again (new time stamps): the playlist marks it.
+        var discontinuity = false
     }
 
     /// What the stream carries, read from its programme table.
@@ -47,6 +49,8 @@ final class TsSegmenter {
     private var segStartPts: Int64 = -1
     private var segStartWall = Date()
     private var seq = 0
+    private var lastPts: Int64 = -1
+    private var pendingDiscontinuity = false
     private(set) var totalBytes = 0
 
     func feed(_ data: Data) {
@@ -76,7 +80,26 @@ final class TsSegmenter {
 
     /// Emits what is left (the stream closed).
     func finish() {
-        if started && current.count > patPacket.count + pmtPackets.count { emit(duration(-1)) }
+        if started && current.count > patPacket.count + pmtPackets.count {
+            // the last picture seen ends the segment (plus about one frame); the wall clock only when there is no PTS
+            let d = lastPts >= 0 && segStartPts >= 0 && lastPts != segStartPts ? duration(lastPts) + 0.04 : duration(-1)
+            emit(d)
+        }
+        started = false
+        current.removeAll(keepingCapacity: true)
+    }
+
+    /// The same channel is about to be read again on a new connection: what is left is emitted, then everything about
+    /// the old connection is forgotten except the segment numbers and lengths. The next segment is marked as a
+    /// discontinuity (its time stamps start over).
+    func restart() {
+        finish()
+        buf.removeAll(keepingCapacity: true)
+        patPacket = []; pmtPackets = []; pmtPid = -1
+        pmtCollect = []; pmtSection = []; pmtExpected = 0
+        videoPid = -1; audioPids = []
+        segStartPts = -1; lastPts = -1
+        if seq > 0 { pendingDiscontinuity = true }
     }
 
     private func handle(_ o: Int) {
@@ -103,6 +126,7 @@ final class TsSegmenter {
 
         if pid == videoPid && pusi && hasPayload {
             let pes = readPes(payload, end)
+            if pes.pts >= 0 { lastPts = pes.pts }
             let key = rai || pes.key
             if !started {
                 if !patPacket.isEmpty && !pmtPackets.isEmpty && key { begin(pes.pts) }
@@ -130,7 +154,8 @@ final class TsSegmenter {
     }
 
     private func emit(_ d: Double) {
-        let seg = Segment(seq: seq, data: Data(current), duration: max(0.2, d))
+        let seg = Segment(seq: seq, data: Data(current), duration: max(0.2, d), discontinuity: pendingDiscontinuity)
+        pendingDiscontinuity = false
         seq += 1
         onSegment?(seg)
     }

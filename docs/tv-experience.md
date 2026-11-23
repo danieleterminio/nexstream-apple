@@ -91,6 +91,13 @@ Reference implementation: Apple `App/Shared/UI/TvPlayerChrome.swift` + `VodPlaye
   - UP / DOWN (and CH+/CH− on Android): previous / next channel in the current list order, instantly; a compact zap
     banner shows number, logo, name and the programme for 3 s; fast repeated presses move a cursor in the banner and
     tune only 600 ms after the last press;
+  - Apple TV, Siri Remote (user decision 23 Nov 2026): only a **physical click** on the top / bottom edge of the
+    clickpad zaps (UP = +1, as Android), also while the info bar is up. A **swipe** up/down or a finger resting on the
+    surface only shows the info bar (a swipe down with the bar up goes into its options); a swipe never zaps.
+    Swipe or click LEFT / RIGHT open Canali / Guida. Implementation: `TvRemoteCatcher` (press recognisers on the arrow
+    press types + a touch recogniser, on the window) in `TvPlayerChrome.swift`; `TvLiveLayer.move` treats an up/down
+    move command without a click just before it as a swipe. UI tests: `XCUIRemote.press(.up/.down)` is a press (= a
+    click); swipes cannot be sent by XCUIRemote, `-nxPlayerPanel swipe` simulates the move command of one;
   - LEFT: open "Canali" (channel list panel); RIGHT: open "Guida" (the next programmes of this channel);
   - select: show the info bar (focus on the option row); play/pause: show the info bar;
   - digits (Android remotes): type a channel number, tuned 1.5 s after the last digit (already exists);

@@ -3,8 +3,9 @@ import SwiftUI
 import Combine
 
 // The Apple TV live player (docs/tv-experience.md §4), in the same style as the on-demand one: nothing on the picture
-// while watching; up / down zap with a small banner, select brings the info bar with its options, left the channel list,
-// right the guide of the channel. Every panel is drawn inside the player with its own focus, and BACK always closes just
+// while watching; a click on the top / bottom edge of the clickpad zaps with a small banner (a swipe or a touch only
+// shows the info bar), select brings the info bar with its options, left the channel list, right the guide of the
+// channel. Every panel is drawn inside the player with its own focus, and BACK always closes just
 // the top layer, so it never reaches the system (which would leave the app).
 
 /// The panels of the live player.
@@ -68,6 +69,10 @@ struct TvLiveLayer: View {
     @State private var bannerTask: Task<Void, Never>? = nil
     @State private var tuneTask: Task<Void, Never>? = nil
     @State private var lastZap = Date.distantPast
+    /// When the last physical click on the top / bottom edge went down (its move command, which follows, is not a swipe).
+    @State private var lastClickAt = Date.distantPast
+    /// Build pipeline: what the simulated swipe did, read by the UI tests through the surface's accessibility value.
+    @State private var debugValue = ""
     @FocusState private var focus: TvLiveFocus?
 
     init(model: LivePlayerModel, player: NxPlayer, chrome: ChromeState) {
@@ -135,20 +140,54 @@ struct TvLiveLayer: View {
         .buttonStyle(NxPlainStyle(scale: 1))
         .focused($focus, equals: .surface)
         .accessibilityIdentifier("player.surface")
+        .accessibilityValue(debugValue.isEmpty ? model.currentId : debugValue)
         .disabled(panel != nil || model.error != nil)
         .onMoveCommand { dir in move(dir) }
         .onExitCommand { back() }
+        .background(TvRemoteCatcher(enabled: panel == nil && model.error == nil && focus == .surface, onClick: click, onTouch: touched))
         .ignoresSafeArea()
     }
 
+    /// The focus engine's moves. Left / right open the panels (swipe or click alike). Up / down come both from a click
+    /// on the clickpad edge (already turned into a zap by `TvRemoteCatcher`) and from a swipe, which only shows the info
+    /// bar (and, when the bar is up, a swipe down goes into its options): a swipe never changes channel.
     private func move(_ dir: MoveCommandDirection) {
         switch dir {
-        case .up: zap(1)
-        case .down: if infoShown { focusOptions() } else { zap(-1) }
+        case .up: vertical(1)
+        case .down: vertical(-1)
         case .left: open(.channels)
         case .right: open(.guide)
         default: break
         }
+    }
+
+    private func vertical(_ d: Int) {
+        if Date().timeIntervalSince(lastClickAt) < 0.6 { return }
+        // the press of a click can be reported a moment after its move command: decide a little later
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            if Date().timeIntervalSince(lastClickAt) < 0.6 { return }
+            swiped(d)
+        }
+    }
+
+    /// A physical click on the top (+1) or bottom (-1) edge of the clickpad: previous / next channel, always (also with
+    /// the info bar up; its options are reached with select or a swipe down).
+    private func click(_ d: Int) {
+        lastClickAt = Date()
+        zap(d)
+    }
+
+    private func swiped(_ d: Int) {
+        guard panel == nil, model.error == nil, focus == .surface else { return }
+        if d < 0 && infoShown { focusOptions() } else { showInfo() }
+    }
+
+    /// A finger on the touch surface: the info bar, nothing else.
+    private func touched() { showInfo() }
+
+    private func showInfo() {
+        guard panel == nil, model.error == nil, !optionFocused, tuneTask == nil else { return }
+        chrome.show(auto: !model.paused)
     }
 
     /// Select: confirms a zap still waiting, else the info bar with the focus on its options.
@@ -526,7 +565,7 @@ struct TvLiveLayer: View {
 
     // MARK: build pipeline
 
-    /// Launch argument `-nxPlayerPanel info|options|zap|channels|guide|tracks|programme|versions|paused`: once the channel
+    /// Launch argument `-nxPlayerPanel info|options|zap|swipe|channels|guide|tracks|programme|versions|paused`: once the channel
     /// plays, put the player in that state so the build pipeline can take its picture (an unreachable test stream shows
     /// the error screen by itself).
     private func demo() async {
@@ -542,6 +581,13 @@ struct TvLiveLayer: View {
         case "info": chrome.show(auto: false)
         case "options": focusOptions()
         case "paused": model.togglePause(); chrome.show(auto: false)
+        case "swipe":
+            // what a swipe up on the touch surface does (a move command with no click): the info bar, same channel
+            let before = model.currentId
+            move(.up)
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            debugValue = "swipe \(before)->\(model.currentId) info=\(infoShown) zap=\(bannerShown)"
+            NxLog.i("NxDebug", debugValue)
         case "zap":
             zap(1)
             try? await Task.sleep(nanoseconds: 200_000_000)
