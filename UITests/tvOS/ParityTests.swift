@@ -36,7 +36,9 @@ final class ParityTests: NxUITestCase {
         pause(0.8)
         snap("home-row4-right3")
         f = focusFrame
-        XCTAssertLessThan(abs(f.minX - rowLeft), 70, "the focused card should come to the row's left edge (x≈\(rowLeft)): \(f), \(focusInfo)")
+        // a Top 10 poster has its big rank number before it (up to ~150 pt): the cell starts at the edge, the poster after
+        XCTAssertLessThan(f.minX - rowLeft, 170, "the focused card should come to the row's left edge (x≈\(rowLeft)): \(f), \(focusInfo)")
+        XCTAssertGreaterThan(f.minX, rowLeft - 40, "the focused card is cut on the left: \(f)")
         let card = focusedLabel
         press(.select, wait: 4.0)
         snap("pushed")

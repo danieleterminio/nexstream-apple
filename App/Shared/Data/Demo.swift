@@ -115,5 +115,9 @@ enum Demo {
         }
         core.db.replaceLive(core.db.categories("live"), chans)
         core.db.replaceProgrammes(progs)
+        // the made-up guide stays: no real guide download replacing it half way through a test (the demo channels carry
+        // real names, so a download matched them and swapped every row and epgId under the open grid)
+        core.db.setMeta("epg_ver", EpgRepository.version)
+        core.db.setMeta("epg_sync", String(Clock.now))
     }
 }
