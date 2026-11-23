@@ -92,7 +92,11 @@ struct NxImage<Placeholder: View>: View {
     var body: some View {
         ZStack(alignment: alignment) {
             if let img = image, loadedUrl == url {
-                if fit { Image(uiImage: img).resizable().aspectRatio(contentMode: .fit) }
+                if fit {
+                    // the box takes the picture's own shape: a logo in a row is as wide as it is, not as its slot
+                    Image(uiImage: img).resizable().aspectRatio(contentMode: .fit)
+                        .aspectRatio(img.size.height > 0 ? img.size.width / img.size.height : 1, contentMode: .fit)
+                }
                 else {
                     Color.clear.overlay(alignment: alignment) { Image(uiImage: img).resizable().aspectRatio(contentMode: .fill) }.clipped()
                 }

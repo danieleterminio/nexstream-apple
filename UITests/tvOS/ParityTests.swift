@@ -29,9 +29,12 @@ final class ParityTests: NxUITestCase {
         var f = focusFrame
         XCTAssertGreaterThanOrEqual(f.minY, billboard - 30, "the focused card is under the billboard: \(f), \(focusInfo)")
         XCTAssertLessThanOrEqual(f.maxY, 1080, "the focused card is below the screen: \(f), \(focusInfo)")
+        // the next row down is a long one (Top 10): there the card can travel to the left edge
+        press(.down, wait: 1.2)
+        snap("home-row4")
         press(.right, 3, wait: 0.9)
         pause(0.8)
-        snap("home-row3-right3")
+        snap("home-row4-right3")
         f = focusFrame
         XCTAssertLessThan(abs(f.minX - rowLeft), 70, "the focused card should come to the row's left edge (x≈\(rowLeft)): \(f), \(focusInfo)")
         let card = focusedLabel
@@ -144,9 +147,12 @@ final class ParityTests: NxUITestCase {
         let dopo = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Dopo:'")).firstMatch
         XCTAssertTrue(dopo.exists, "the info bar should say what comes next ('Dopo: …')")
         if dopo.exists { XCTAssertLessThanOrEqual(dopo.frame.maxX, 1920 - 60, "'Dopo:' runs past the safe area: \(dopo.frame)") }
-        // zap to the channel with the doubled rows: "Dopo:" must still be there
+        // tune the channel with the doubled rows (the second of the list) from Canali: "Dopo:" must still be there
         back(wait: 1.2)
-        press(.down, wait: 3.0)
+        press(.left, wait: 1.5)
+        press(.down, wait: 0.8)
+        press(.select, wait: 4.0)
+        if el("player.panel.channels").exists { back(wait: 1.2) }
         press(.select, wait: 1.5)
         snap("live-info-bar-ch2")
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Dopo:'")).firstMatch.exists, "'Dopo:' vanished on a channel whose guide lists a programme twice")
