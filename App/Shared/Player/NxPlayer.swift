@@ -62,6 +62,8 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
     @Published private(set) var failureReason: String? = nil
     /// Bumped when the audio / subtitle tracks of the stream become known.
     @Published private(set) var tracksVersion = 0
+    /// Live: the proxy is opening the line again after its download stopped (the picture may pause for a moment).
+    @Published private(set) var upstreamRecovering = false
     /// Zoom to fill the screen (crops the sides on a phone) instead of showing the whole picture.
     @Published var fill = false { didSet { surface.systemView.playerLayer.videoGravity = fill ? .resizeAspectFill : .resizeAspect } }
 
@@ -85,6 +87,8 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
     private var itemObs = [NSKeyValueObservation]()
     private var playerObs = [NSKeyValueObservation]()
     private var noteObs = [NSObjectProtocol]()
+    /// Observers of the current item only (removed with it).
+    private var itemNotes = [NSObjectProtocol]()
     private var timeObs: Any? = nil
     private var audioGroup: AVMediaSelectionGroup? = nil
     private var subGroup: AVMediaSelectionGroup? = nil
@@ -94,6 +98,17 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
     /// Live: new pictures are counted here, so a frozen picture can be told from a stream that plays.
     private var videoOutput: AVPlayerItemVideoOutput? = nil
     private var frameCount = 0
+    // stalls: detection, forced resume, numbers for the log
+    private var stallTimer: Timer? = nil
+    private var policy = StallPolicy(live: false)
+    private var waitSince: Date? = nil
+    private var stallLogged = false
+    private var forcedAt: Date? = nil
+    private var lastSeekAt = Date.distantPast
+    private var stats = StallStats()
+    private var vlcLastTime: Int32 = -1
+    private var vlcStillSince: Date? = nil
+    private var errorLogSeen = 0
     private static let stopQueue = DispatchQueue(label: "nx.player.stop")
     #if os(iOS)
     private var pip: AVPictureInPictureController? = nil
@@ -118,6 +133,12 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
         playerObs.append(av.observe(\.timeControlStatus, options: [.new]) { [weak self] _, _ in DispatchQueue.main.async { self?.systemStatusChanged() } })
         playerObs.append(av.observe(\.isExternalPlaybackActive, options: [.new]) { [weak self] p, _ in DispatchQueue.main.async { self?.external = p.isExternalPlaybackActive } })
         timeObs = av.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 2), queue: .main) { [weak self] t in self?.systemTime(t) }
+        // AVPlayer waits by itself after a stall, but only resumes once it predicts it will never stall again (10-15 s on
+        // a live channel or a slow file host). It keeps waiting at first; `stallTick` resumes it once enough is buffered.
+        av.automaticallyWaitsToMinimizeStalling = true
+        let st = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in self?.stallTick() }
+        RunLoop.main.add(st, forMode: .common)
+        stallTimer = st
         let nc = NotificationCenter.default
         noteObs.append(nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in self?.background() })
         noteObs.append(nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in self?.foreground() })
@@ -133,7 +154,9 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
     }
 
     deinit {
+        stallTimer?.invalidate()
         if let t = timeObs { av.removeTimeObserver(t) }
+        itemNotes.forEach { NotificationCenter.default.removeObserver($0) }
         noteObs.forEach { NotificationCenter.default.removeObserver($0) }
     }
 
@@ -166,6 +189,7 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
         reset()
         let req = Request(url: url, headers: headers, startMs: startMs, live: live, key: key, file: nil)
         request = req
+        resetStalls(live: live)
         loaded = true
         positionMs = startMs; durationMs = 0
         state = .opening
@@ -183,6 +207,7 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
         reset()
         let req = Request(url: file.absoluteString, headers: [:], startMs: startMs, live: false, key: nil, file: file)
         request = req
+        resetStalls(live: false)
         loaded = true
         positionMs = startMs; durationMs = 0
         state = .opening
@@ -197,6 +222,7 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
     }
 
     private func reset() {
+        logSummary()
         gen += 1
         userPaused = false
         everPlayed = false
@@ -205,11 +231,15 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
         failureReason = nil
         videoOutput = nil
         frameCount = 0
+        upstreamRecovering = false
+        resetStalls(live: request?.live == true)
         stopEngines()
     }
 
     private func stopEngines() {
         itemObs = []
+        itemNotes.forEach { NotificationCenter.default.removeObserver($0) }
+        itemNotes = []
         audioGroup = nil; subGroup = nil; subOptions = []
         av.pause()
         av.replaceCurrentItem(with: nil)
@@ -247,8 +277,13 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
         p.onEnded = { [weak self, weak p] early in
             guard let self = self, self.gen == g else { return }
             if early { self.failureReason = NxPlayer.describe(proxyFailure: p?.failure); self.fail(); return }
-            // the line closed the stream: the playlist is now closed too, so what is buffered plays out and the
-            // system player reports the end by itself; the caller then connects again
+            // the line stayed unreachable through the proxy's own reconnections: the playlist is now closed too, so
+            // what is buffered plays out and the system player reports the end by itself; the caller then connects again
+            self.failureReason = NxPlayer.describe(proxyFailure: p?.failure)
+        }
+        p.onRecovering = { [weak self] on in
+            guard let self = self, self.gen == g else { return }
+            self.upstreamRecovering = on
         }
         p.start(url: u, headers: req.headers)
     }
@@ -261,8 +296,13 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
         if !headers.isEmpty { opts["AVURLAssetHTTPHeaderFieldsKey"] = headers }
         let asset = AVURLAsset(url: u, options: opts)
         let item = AVPlayerItem(asset: asset)
+        // How far ahead the system player loads (ExoPlayer on Android: up to 60 s for films, 30 s for channels). The old
+        // value of 6 s on channels left no room for the line's hiccups. On a channel the proxy decides how much there is
+        // (it starts the player at the oldest segment it has), so this is only an upper bound.
+        item.preferredForwardBufferDuration = live ? NxPlayer.liveForwardBuffer : NxPlayer.vodForwardBuffer
         if live {
-            item.preferredForwardBufferDuration = 6
+            // after a stall stay where the picture stopped (the cushion is kept) instead of jumping to the newest segment
+            item.automaticallyPreservesTimeOffsetFromLive = false
             let o = AVPlayerItemVideoOutput(pixelBufferAttributes: nil)
             item.add(o)
             videoOutput = o
@@ -272,19 +312,27 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
             item.observe(\.status, options: [.new]) { [weak self] it, _ in DispatchQueue.main.async { self?.itemStatus(it, g) } },
         ]
         let nc = NotificationCenter.default
-        noteObs.append(nc.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
+        itemNotes.append(nc.addObserver(forName: .AVPlayerItemPlaybackStalled, object: item, queue: .main) { [weak self] _ in
+            guard let self = self, self.gen == g else { return }
+            self.stats.stalledNotices += 1
+        })
+        itemNotes.append(nc.addObserver(forName: .AVPlayerItemNewErrorLogEntry, object: item, queue: .main) { [weak self] _ in
+            guard let self = self, self.gen == g else { return }
+            self.logItemErrors(item)
+        })
+        itemNotes.append(nc.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
             guard let self = self, self.gen == g, self.loaded else { return }
             self.state = .ended
             self.onEnded?()
         })
-        noteObs.append(nc.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main) { [weak self] n in
+        itemNotes.append(nc.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main) { [weak self] n in
             guard let self = self, self.gen == g, self.loaded else { return }
             self.failureReason = NxPlayer.describe(n.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error, item)
             self.systemFailed()
         })
         av.replaceCurrentItem(with: item)
         av.defaultRate = wantedRate
-        if startMs > 1000 { av.seek(to: CMTime(value: CMTimeValue(startMs), timescale: 1000), toleranceBefore: .zero, toleranceAfter: CMTime(value: 2, timescale: 1)) }
+        if startMs > 1000 { lastSeekAt = Date(); av.seek(to: CMTime(value: CMTimeValue(startMs), timescale: 1000), toleranceBefore: .zero, toleranceAfter: CMTime(value: 2, timescale: 1)) }
         av.play()
     }
 
@@ -315,9 +363,12 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
         if remember { NxPlayer.markVlc(req.key) }
         let g = gen
         itemObs = []
+        itemNotes.forEach { NotificationCenter.default.removeObserver($0) }
+        itemNotes = []
         av.pause()
         av.replaceCurrentItem(with: nil)
         proxy?.stop(); proxy = nil
+        upstreamRecovering = false
         state = .opening
         // the line allows one connection: the proxy's download must be closed before VLC opens its own
         DispatchQueue.main.asyncAfter(deadline: .now() + (req.live ? 0.45 : 0.05)) { [weak self] in
@@ -345,6 +396,7 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
         guard loaded, engine == .system, av.currentItem != nil else { return }
         switch av.timeControlStatus {
         case .playing:
+            if !everPlayed { NxLog.i("NxStall", "\(kind) system player started in \(String(format: "%.1f", Date().timeIntervalSince(stats.startedAt))) s") }
             everPlayed = true
             if playingSince == nil { playingSince = Date() }
             state = .playing
@@ -423,6 +475,150 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
         return frameCount
     }
 
+    // MARK: stalls
+
+    static let vodForwardBuffer: TimeInterval = 60
+    static let liveForwardBuffer: TimeInterval = 30
+
+    /// What the log tells about the stalls of one stream.
+    struct StallStats {
+        var startedAt = Date()
+        var stalls = 0
+        var stalledSeconds = 0.0
+        var longest = 0.0
+        var forced = 0
+        var stalledNotices = 0
+    }
+
+    private func resetStalls(live: Bool) {
+        policy = StallPolicy(live: live)
+        waitSince = nil
+        stallLogged = false
+        forcedAt = nil
+        lastSeekAt = .distantPast
+        stats = StallStats()
+        vlcLastTime = -1
+        vlcStillSince = nil
+        errorLogSeen = 0
+    }
+
+    /// Seconds of video loaded ahead of the playhead (system player).
+    private func bufferAhead(_ item: AVPlayerItem) -> Double {
+        let now = item.currentTime()
+        guard now.isNumeric else { return 0 }
+        let t = CMTimeGetSeconds(now)
+        for v in item.loadedTimeRanges {
+            let r = v.timeRangeValue
+            let start = CMTimeGetSeconds(r.start), end = CMTimeGetSeconds(CMTimeRangeGetEnd(r))
+            if start - 0.3 <= t && t <= end { return max(0, end - t) }
+        }
+        return 0
+    }
+
+    /// "4.2/6.8 Mb/s" (what the stream says / what the network gave), from the item's access log.
+    private func bitrates(_ item: AVPlayerItem) -> String {
+        guard let e = item.accessLog()?.events.last else { return "? Mb/s" }
+        let ind = e.indicatedBitrate > 0 ? String(format: "%.1f", e.indicatedBitrate / 1_000_000) : "?"
+        let obs = e.observedBitrate > 0 ? String(format: "%.1f", e.observedBitrate / 1_000_000) : "?"
+        return "\(ind)/\(obs) Mb/s (stream/network)"
+    }
+
+    private var kind: String { request?.live == true ? "live" : (request?.file != nil ? "file" : "vod") }
+
+    /// Twice a second: notices a stall, resumes the system player as soon as it has enough to play (ExoPlayer's rule),
+    /// and writes the start and end of every stall to nx.log with the buffer and the bit rate.
+    private func stallTick() {
+        guard loaded else { return }
+        let now = Date()
+        if engine == .vlc { vlcStallTick(now); return }
+        guard let item = av.currentItem else { return }
+        let status = av.timeControlStatus
+        if status == .waitingToPlayAtSpecifiedRate && !userPaused {
+            let ahead = bufferAhead(item)
+            if waitSince == nil { waitSince = now; stallLogged = false }
+            let waited = now.timeIntervalSince(waitSince ?? now)
+            let afterSeek = now.timeIntervalSince(lastSeekAt) < 3
+            let reason = av.reasonForWaitingToPlay
+            // a stall = it had been playing, and not just because the viewer jumped somewhere
+            if everPlayed && !afterSeek && !stallLogged && waited >= 0.4 {
+                stallLogged = true
+                stats.stalls += 1
+                policy.stalled(at: now.timeIntervalSince1970)
+                let pos = CMTimeGetSeconds(item.currentTime())
+                NxLog.w("NxStall", "\(kind) stall #\(stats.stalls) at \(String(format: "%.1f", pos.isFinite ? pos : 0)) s: buffer ahead \(String(format: "%.1f", ahead)) s, \(bitrates(item)), waiting: \(reason?.rawValue ?? "-")\(upstreamRecovering ? ", line reconnecting" : "")")
+            }
+            let need = policy.threshold(started: everPlayed, now: now.timeIntervalSince1970)
+            let canForce = reason == AVPlayer.WaitingReason.toMinimizeStalls || reason == AVPlayer.WaitingReason.evaluatingBufferingRate
+            let calm = forcedAt.map { now.timeIntervalSince($0) > 1 } ?? true
+            if canForce && item.status == .readyToPlay && waited >= 0.5 && ahead >= need && calm {
+                forcedAt = now
+                stats.forced += 1
+                NxLog.i("NxStall", "\(kind): playing on with \(String(format: "%.1f", ahead)) s buffered (needed \(String(format: "%.1f", need)) s) after \(String(format: "%.1f", waited)) s of waiting\(everPlayed ? "" : " at the start")")
+                av.playImmediately(atRate: wantedRate)
+            }
+        } else if status == .playing, let since = waitSince {
+            if stallLogged {
+                let d = now.timeIntervalSince(since)
+                stats.stalledSeconds += d
+                stats.longest = max(stats.longest, d)
+                NxLog.w("NxStall", "\(kind) stall #\(stats.stalls) over after \(String(format: "%.1f", d)) s, buffer ahead \(String(format: "%.1f", bufferAhead(item))) s, \(bitrates(item))")
+            }
+            waitSince = nil
+            stallLogged = false
+        } else if status == .paused {
+            waitSince = nil
+            stallLogged = false
+        }
+    }
+
+    /// VLC has no stall state worth trusting (it reports "buffering" all the time): its clock standing still while it
+    /// should play is the stall.
+    private func vlcStallTick(_ now: Date) {
+        guard let v = vlcPlayer, everPlayed, !userPaused, state != .paused else { vlcStillSince = nil; return }
+        let t = v.time.intValue
+        if t != vlcLastTime {
+            if let s = vlcStillSince, stallLogged {
+                let d = now.timeIntervalSince(s)
+                stats.stalledSeconds += d
+                stats.longest = max(stats.longest, d)
+                NxLog.w("NxStall", "\(kind) VLC stall #\(stats.stalls) over after \(String(format: "%.1f", d)) s")
+            }
+            vlcLastTime = t
+            vlcStillSince = nil
+            stallLogged = false
+            return
+        }
+        if vlcStillSince == nil { vlcStillSince = now; stallLogged = false }
+        if !stallLogged, let s = vlcStillSince, now.timeIntervalSince(s) >= 1.0, now.timeIntervalSince(lastSeekAt) > 3 {
+            stallLogged = true
+            stats.stalls += 1
+            NxLog.w("NxStall", "\(kind) VLC stall #\(stats.stalls) at \(t / 1000) s (state \(v.state.rawValue))\(upstreamRecovering ? ", line reconnecting" : "")")
+        }
+    }
+
+    /// New entries of the system player's error log (HTTP errors, "playlist unchanged", decoder trouble), at most 30
+    /// per stream.
+    private func logItemErrors(_ item: AVPlayerItem) {
+        guard let events = item.errorLog()?.events, events.count > errorLogSeen else { return }
+        if errorLogSeen < 30 {
+            for e in events[errorLogSeen...].prefix(30 - errorLogSeen) {
+                NxLog.w("NxStall", "\(kind) player log: \(e.errorDomain) \(e.errorStatusCode) \(e.errorComment ?? "") \(e.uri.map { String($0.suffix(60)) } ?? "")")
+            }
+        }
+        errorLogSeen = events.count
+    }
+
+    /// One line per stream when it closes: how long it played and how much of it was stalled.
+    private func logSummary() {
+        guard request != nil, everPlayed else { return }
+        let played = Date().timeIntervalSince(stats.startedAt)
+        var line = "\(kind) \(engine == .vlc ? "VLC" : "system player") closed after \(Int(played)) s: \(stats.stalls) stalls, \(String(format: "%.1f", stats.stalledSeconds)) s stalled (longest \(String(format: "%.1f", stats.longest)) s), \(stats.forced) forced resumes"
+        if engine == .system, let item = av.currentItem, let e = item.accessLog()?.events.last {
+            line += ", \(bitrates(item)), \(e.numberOfStalls) stalls counted by the system, \(stats.stalledNotices) stall notices, \(e.numberOfDroppedVideoFrames) dropped frames"
+        }
+        NxLog.i("NxStall", line)
+    }
+
     // MARK: VLC
 
     private func startVlc(_ req: Request) {
@@ -438,7 +634,8 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
         else {
             guard let u = NxPlayer.url(req.url) else { fail(); return }
             media = VLCMedia(url: u)
-            media.addOption(":network-caching=\(req.live ? 1500 : 3000)")
+            // VLC's own buffer: a channel gets 2.5 s (it was 1.5 s, too little for the line's hiccups), a film 5 s
+            media.addOption(":network-caching=\(req.live ? 2500 : 5000)")
             media.addOption(":http-reconnect")
             var ua = Http.userAgent
             var hasUa = false
@@ -520,6 +717,7 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
 
     /// Stops and frees the connection (the line allows one at a time: this must happen before the next channel opens).
     func stop() {
+        logSummary()
         loaded = false
         request = nil
         reset()
@@ -539,6 +737,7 @@ final class NxPlayer: NSObject, ObservableObject, VLCMediaPlayerDelegate {
         let target = max(0, durationMs > 0 ? min(ms, durationMs - 2000) : ms)
         if engine == .vlc { vlcPlayer?.time = VLCTime(int: Int32(truncatingIfNeeded: target)) }
         else { av.seek(to: CMTime(value: CMTimeValue(target), timescale: 1000), toleranceBefore: CMTime(value: 1, timescale: 2), toleranceAfter: CMTime(value: 1, timescale: 2)) }
+        lastSeekAt = Date()
         positionMs = target
     }
 
