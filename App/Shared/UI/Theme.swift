@@ -127,13 +127,15 @@ extension View {
 struct Focusable<Content: View>: View {
     @Environment(\.isFocused) private var focused
     @Environment(\.nxRestoreKey) private var restoreKey
+    @Environment(\.nxCardHook) private var cardHook
+    @Environment(\.nxRowHook) private var rowHook
     @State private var fid = UUID().uuidString
     var onFocus: (() -> Void)? = nil
     @ViewBuilder let content: (Bool) -> Content
     var body: some View {
         #if os(tvOS)
         content(focused).onChange(of: focused) { _, f in
-            if f { FocusMemory.noteFocus(restoreKey); FocusMemory.current = fid; onFocus?() }
+            if f { FocusMemory.noteFocus(restoreKey); FocusMemory.current = fid; onFocus?(); cardHook?(); rowHook?() }
             else if FocusMemory.current == fid { FocusMemory.current = nil }
         }
         // a focused view that goes away (a panel closing) leaves nothing focused
@@ -200,6 +202,8 @@ enum FocusMemory {
 }
 
 private struct NxRestoreKeyKey: EnvironmentKey { static let defaultValue: String? = nil }
+private struct NxCardHookKey: EnvironmentKey { static let defaultValue: (() -> Void)? = nil }
+private struct NxRowHookKey: EnvironmentKey { static let defaultValue: (() -> Void)? = nil }
 private struct NxFocusKeyKey: EnvironmentKey { static let defaultValue: String? = nil }
 private struct NxPageSectionKey: EnvironmentKey { static let defaultValue: AppSection? = nil }
 extension EnvironmentValues {
@@ -207,6 +211,10 @@ extension EnvironmentValues {
     var nxRestoreKey: String? { get { self[NxRestoreKeyKey.self] } set { self[NxRestoreKeyKey.self] = newValue } }
     /// A fixed key asked from outside for the one restorable button inside (`nxFocusKey`).
     var nxFocusKey: String? { get { self[NxFocusKeyKey.self] } set { self[NxFocusKeyKey.self] = newValue } }
+    /// Apple TV: called when a card inside a row gets the focus (the row brings that card to its left edge).
+    var nxCardHook: (() -> Void)? { get { self[NxCardHookKey.self] } set { self[NxCardHookKey.self] = newValue } }
+    /// Apple TV: called when anything inside a page row gets the focus (the page brings that row up under its top).
+    var nxRowHook: (() -> Void)? { get { self[NxRowHookKey.self] } set { self[NxRowHookKey.self] = newValue } }
     /// The section whose pages a view belongs to (Apple TV side menu sections).
     var nxPageSection: AppSection? { get { self[NxPageSectionKey.self] } set { self[NxPageSectionKey.self] = newValue } }
 }

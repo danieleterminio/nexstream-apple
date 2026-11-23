@@ -241,15 +241,20 @@ struct BrowsePage<Top: View>: View {
             #if os(tvOS)
             ZStack(alignment: .topLeading) {
                 Billboard(items: state.carousel)
-                ScrollView(.vertical, showsIndicators: false) {
-                    LazyVStack(alignment: .leading, spacing: Metrics.rowGap) {
-                        top()
-                        rows
-                        Color.clear.frame(height: 60)
+                // Android BrowseVerticalSpec: the row under the remote comes to the top of the list, its title showing,
+                // and the rows above it leave entirely — never a row cut half way under the billboard (the cards'
+                // lower half and their progress bars were left showing, which looked like broken cards)
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical, showsIndicators: false) {
+                        LazyVStack(alignment: .leading, spacing: Metrics.rowGap) {
+                            top()
+                            rowList(proxy)
+                            Color.clear.frame(height: 400)
+                        }
+                        .padding(.top, 14)
                     }
-                    .padding(.top, 14)
+                    .scrollClipDisabled(false)
                 }
-                .scrollClipDisabled(false)
                 .padding(.top, Billboard.height)
             }
             .ignoresSafeArea()
@@ -273,11 +278,22 @@ struct BrowsePage<Top: View>: View {
         }
     }
 
-    @ViewBuilder private var rows: some View {
+    @ViewBuilder private var rows: some View { rowList(nil) }
+
+    /// `proxy` (Apple TV): the page's scroll view, to bring the focused row to its top.
+    @ViewBuilder private func rowList(_ proxy: ScrollViewProxy?) -> some View {
         if let s = app.syncStatus {
             HStack(spacing: Metrics.u(8)) { NxSpinner(size: 14); Text(s).font(NxFont.caption).foregroundStyle(NxColor.textDim) }.padding(.horizontal, Metrics.gutter)
         }
-        ForEach(state.rows) { row in rowView(row) }
+        ForEach(state.rows) { row in
+            if let p = proxy {
+                rowView(row)
+                    .id(row.id)
+                    .environment(\.nxRowHook, { withAnimation(.easeOut(duration: 0.28)) { p.scrollTo(row.id, anchor: .top) } })
+            } else {
+                rowView(row)
+            }
+        }
         if let end = onEnd { Color.clear.frame(height: 1).onAppear(perform: end) }
     }
 
