@@ -190,6 +190,12 @@ struct GuideView: View {
     @State private var byEpg: [String: [ProgrammeEntity]] = [:]
     @State private var loadedFor = ""
     @State private var now = Clock.now
+    #if os(tvOS)
+    /// The cell with the focus, by channel and programme start (not by row id): when the guide is read again (EPG
+    /// refresh) the cells are rebuilt and the focus is put back on the same channel at the same time, instead of the
+    /// focus engine falling back to the side menu.
+    @FocusState private var focus: GuideFocus?
+    #endif
 
     #if os(tvOS)
     private let span: Millis = 3 * Clock.hour
@@ -248,6 +254,7 @@ struct GuideView: View {
             }
         }
         .onAppear { now = Clock.now }
+        .onReceive(NotificationCenter.default.publisher(for: .nxGuideReload)) { _ in Task { await load() } }
     }
 
     // MARK: controls
@@ -377,16 +384,19 @@ struct GuideView: View {
                 }
             }
             .accessibilityLabel(c.name)
+            #if os(tvOS)
+            .focused($focus, equals: GuideFocus.head(c.streamId))
+            #endif
             .padding(.trailing, gap)
             ZStack(alignment: .topLeading) {
                 if list.isEmpty {
-                    cell(title: c.event ?? "Nessuna informazione", sub: c.eventStart.map { TimeText.time($0) } ?? c.eventSub, width: gridW, onAir: c.event != nil, past: false, progress: nil, action: { app.play(c) }, long: nil, play: { app.play(c) })
+                    cell(key: .cell(c.streamId, 0), title: c.event ?? "Nessuna informazione", sub: c.eventStart.map { TimeText.time($0) } ?? c.eventSub, width: gridW, onAir: c.event != nil, past: false, progress: nil, action: { app.play(c) }, long: nil, play: { app.play(c) })
                 }
                 ForEach(list) { p in
                     let x0 = x(p.start, gridW), x1 = x(p.stop, gridW)
                     let s = store.showing(c, p)
                     let onAir = p.start <= now && p.stop > now
-                    cell(title: s.cardTitle, sub: TimeText.time(p.start) + (s.cardLine.map { " · " + $0 } ?? ""), width: max(2, x1 - x0 - gap), onAir: onAir, past: p.stop <= now,
+                    cell(key: .cell(c.streamId, p.start), title: s.cardTitle, sub: TimeText.time(p.start) + (s.cardLine.map { " · " + $0 } ?? ""), width: max(2, x1 - x0 - gap), onAir: onAir, past: p.stop <= now,
                          sliver: p.stop - p.start < GuideView.sliver,
                          progress: onAir ? s.progress(now) : nil,
                          action: { if onAir { app.play(c) } else { app.openShowing(s) } },
@@ -413,7 +423,7 @@ struct GuideView: View {
 
     /// One programme (Android GuideCell): lighter when on air, how far it is as a red line along the bottom. A narrow
     /// cell still says what it is: the title in small type, cut with "…", down to a few letters; only a sliver is bare.
-    private func cell(title: String, sub: String?, width: CGFloat, onAir: Bool, past: Bool, sliver: Bool = false, progress: Double?, action: @escaping () -> Void, long: (() -> Void)?, play: (() -> Void)?) -> some View {
+    private func cell(key: GuideFocus, title: String, sub: String?, width: CGFloat, onAir: Bool, past: Bool, sliver: Bool = false, progress: Double?, action: @escaping () -> Void, long: (() -> Void)?, play: (() -> Void)?) -> some View {
         CardButton(action: action, radius: Metrics.u(4), onLong: long, onPlay: play, flat: true) {
             ZStack(alignment: .bottomLeading) {
                 (onAir ? NxColor.ink4 : NxColor.ink2)
@@ -438,6 +448,9 @@ struct GuideView: View {
         }
         .disabled(sliver)
         .accessibilityLabel(title)
+        #if os(tvOS)
+        .focused($focus, equals: key)
+        #endif
     }
 
     private func load() async {
@@ -447,9 +460,59 @@ struct GuideView: View {
         let list = await Task.detached(priority: .userInitiated) { db.programmesForChannels(ids, from, to) }.value
         if Task.isCancelled { return }
         // a feed can list the same programme twice (same start, same title): one cell, not two on top of each other
-        byEpg = list.grouped { $0.epgId }.mapValues { l in
+        let fresh = list.grouped { $0.epgId }.mapValues { l in
             var seen = Set<String>()
             return l.filter { seen.insert("\($0.start)|\($0.title)").inserted }
         }
+        #if os(tvOS)
+        // a cell had the focus while the rows are rebuilt: keep it on the same channel at the same time
+        let had = focus
+        byEpg = fresh
+        if let h = had { keepFocus(h) }
+        #else
+        byEpg = fresh
+        #endif
     }
+
+    #if os(tvOS)
+    /// After a rebuild: the cell of the same channel that covers the time the focused one started at (the same cell
+    /// when the programme is still there), or the channel head; tried again for a moment while the rows are rebuilt.
+    private func keepFocus(_ h: GuideFocus) {
+        let target: GuideFocus
+        switch h {
+        case .head: target = h
+        case .cell(let ch, let t0):
+            let c = channels.first(where: { $0.streamId == ch })
+            let list = (c?.epgId.flatMap { byEpg[$0] } ?? []).filter { $0.stop > start && $0.start < start + span && $0.stop - $0.start >= GuideView.sliver }
+            let at = t0 == 0 ? now : max(t0, start)
+            if let p = list.first(where: { $0.start <= at && at < $0.stop }) ?? list.min(by: { abs($0.start - at) < abs($1.start - at) }) {
+                target = .cell(ch, p.start)
+            } else if list.isEmpty, c != nil {
+                target = .cell(ch, 0)
+            } else {
+                target = .head(ch)
+            }
+        }
+        for delay in [0.0, 0.1, 0.35] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                // only while nothing else took the focus on purpose: lost (nil), or still on the old cell
+                if focus == nil || focus == h { focus = target }
+            }
+        }
+    }
+    #endif
 }
+
+extension Notification.Name {
+    /// The guide data was written again (demo -nxEpgRefresh): the grid reads it now.
+    static let nxGuideReload = Notification.Name("nx.guide.reload")
+}
+
+#if os(tvOS)
+/// What has the focus in the guide grid: a channel head, or a programme of a channel by its start (0 = the channel's
+/// only "now" cell when it has no guide).
+enum GuideFocus: Hashable {
+    case head(String)
+    case cell(String, Millis)
+}
+#endif

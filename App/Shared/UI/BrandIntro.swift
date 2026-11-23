@@ -14,6 +14,8 @@ enum NxIntro {
     static let end: Double = 5.15
     /// True while the opening is on screen (BackGuard ignores BACK meanwhile).
     nonisolated(unsafe) static var running = false
+    /// True once the opening has ended (the update notice waits for it).
+    nonisolated(unsafe) static var done = false
 }
 
 private let introInk = Color(hex: 0xF4F4F6)
@@ -84,10 +86,11 @@ struct BrandIntro: View {
                 last = now
             }
             NxIntro.running = false
+            NxIntro.done = true
             NxLog.i("NxIntro", String(format: "opening done after %.2f s", Date().timeIntervalSince(start)))
             onDone()
         }
-        .onDisappear { NxIntro.running = false }
+        .onDisappear { NxIntro.running = false; NxIntro.done = true }
     }
 
     private func frame(_ t: Double) -> some View {

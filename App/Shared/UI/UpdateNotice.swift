@@ -14,6 +14,14 @@ extension AppModel {
     private func offerUpdateWhenFree(tries: Int) {
         let u = AppUpdates.shared
         guard let r = u.available, !u.seen(r) else { return }
+        // the opening plays first: the notice comes right after it, never under or over it
+        if !NxIntro.done {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                self.offerUpdateWhenFree(tries: tries)
+            }
+            return
+        }
         if vpn, session != nil, profile != nil, onboardingFor == nil, playing == nil, sheets.isEmpty {
             u.markSeen(r)
             presentUpdate(r)

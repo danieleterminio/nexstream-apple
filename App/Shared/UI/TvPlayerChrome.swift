@@ -109,7 +109,9 @@ struct TvVodLayer: View {
                 Color.clear.frame(height: 300).allowsHitTesting(false)
             }
             if player.state == .opening || player.state == .buffering { BrandLoader(size: 56) }
-            if showControls { controls.accessibilityElement(children: .contain).accessibilityIdentifier("player.controls").transition(.opacity) }
+            // while a panel is open the bar and the option row stay drawn but cannot take the focus: a list that rebuilds its
+            // lines (Cambia fonte while the sources are checked) must not lose the focus to the row behind it
+            if showControls { controls.disabled(panel != nil).accessibilityElement(children: .contain).accessibilityIdentifier("player.controls").transition(.opacity) }
             if let f = flash { centreGlyph(f) }
             if creditsShown { credits }
             if let p = panel { panelView(p).accessibilityElement(children: .contain).accessibilityIdentifier("player.panel.\(p.rawValue)").transition(.opacity).zIndex(5) }
@@ -435,24 +437,6 @@ struct TvVodLayer: View {
         Settings.speedOptions.map { v in
             TvListItem(id: "\(v)", title: Settings.speedLabel(v), selected: v == model.speed) { model.setSpeed(v); closePanel() }
         }
-    }
-
-    private var sourceNow: String? {
-        guard let s = model.stream else { return nil }
-        return "Adesso: \(s.channel) · \(s.server)"
-    }
-
-    private var sourceItems: [TvListItem] {
-        guard let s = model.stream, s.channel != "offline" else { return [] }
-        var a = [TvListItem]()
-        if s.alternates.count > 1 {
-            for (i, alt) in s.alternates.enumerated() {
-                let label = (alt.label ?? "").isBlank ? "Versione \(i + 1)" : (alt.label ?? "")
-                a.append(TvListItem(id: "alt\(i)", title: label, selected: alt.url == s.url, badge: VodPlayerView.qualityOf(label)) { model.useAlternate(alt); closePanel() })
-            }
-        }
-        a.append(TvListItem(id: "other", title: "Cerca un'altra fonte", sub: "La riproduzione riparte da dove sei", icon: "magnifyingglass") { closePanel(); model.otherSource() })
-        return a
     }
 
     // MARK: phone remote

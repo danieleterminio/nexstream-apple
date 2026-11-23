@@ -1,4 +1,4 @@
-# NexStream on TV — one experience on Android TV / Fire TV and Apple TV (v1.3, 14 Nov 2026)
+# NexStream on TV — one experience on Android TV / Fire TV and Apple TV (v1.4, 24 Nov 2026)
 
 Goal: "a Netflix, but better for us". Both TV apps must look and behave the same. Every key must do something
 sensible on every screen, the focus must always be visible, BACK must never drop the user out of the app by surprise.
@@ -79,7 +79,15 @@ Reference implementation: Apple `App/Shared/UI/TvPlayerChrome.swift` + `VodPlaye
   - **Episodi**: seasons on the left (current one ticked), episodes on the right as rows (still 16:9, "5. Titolo",
     duration, 2–3 lines of plot, "IN RIPRODUZIONE" on the current one); focus starts on the current episode; the list
     scrolls under a fixed header without overlapping it; select plays.
-  - **Velocità**, **Fonte**: compact lists in the same style.
+  - **Velocità**: compact list in the same style.
+  - **Cambia fonte** (v1.4, option "Cambia fonte"): every source of the title at once (site, server, the site's own
+    tag), the one playing ticked "IN RIPRODUZIONE"; each line gets its real quality (720p / 1080p / 4K, HEVC) as it is
+    checked in the background, dead ones are greyed "Non disponibile" and cannot be chosen. Focus starts on the source
+    playing and follows it while lines arrive until the user moves; the panel never closes by itself (the bar and the
+    option row behind it cannot take the focus while a panel is open); select plays from the same position; BACK closes.
+- **Prossimo episodio** (v1.4, all platforms): when the credits buttons appear, "Prossimo episodio" (focused) fills up
+  over 5 s and plays the next episode; any other key / touch stops the countdown; "Guarda i titoli di coda" dismisses
+  the buttons. The end-of-episode screen also counts 5 s. Both respect the autoplay setting.
 - States: loading (backdrop + logo animation + status + "Annulla" focused), error ("Riprova" focused, "Chiudi"),
   end of episode (next episode card with countdown, "Guarda ora" focused, BACK = close), "Stai ancora guardando?"
   ("Continua" focused), credits prompt ("Prossimo episodio" focused, "Titoli di coda").
@@ -124,3 +132,19 @@ Reference implementation: Apple `App/Shared/UI/TvPlayerChrome.swift` + `VodPlaye
 4. Player: every key in sections 3–4 in every state; panels open, move, apply, close; BACK never exits the app.
 5. Text never cut or overlapping at 1080p; nothing under the TV safe area (5% margin).
 6. No crash, no ANR, no error in the log during the whole run.
+
+## 6. v1.4 additions (24 Nov 2026)
+
+- **Opening** (every cold start, all devices, not skippable): variant A "Titoli di testa" — the quote "If buying isn't
+  owning, piracy isn't stealing." word by word with a blur-in, fades at 3.0 s, then the breathing symbol with a red glow
+  (~5 s). The system splash is plain black. Nothing under it takes keys. Anything that wants the screen at start waits
+  for it: the Apple update notice and the Android update page come right after the opening, never under it.
+- **App updates**: Android = mandatory update page (download, SHA-256 + same signing certificate check, system
+  installer), the app is blocked until updated. Apple = one dismissable notice per version ("Nuova versione
+  disponibile") plus a line in Impostazioni → Informazioni. Service and channels: NexStreamSync/UPDATES.md.
+- **Guide focus through a refresh**: when the guide is read again (EPG refresh) while a cell has the focus, the focus
+  stays on the same channel at the same time (Apple `GuideFocus`; Android keys the cells by channel + start). It must
+  never fall back to the side menu. Apple UI test `ParityTests/testGuideFocusSurvivesRefresh` (`-nxEpgRefresh`
+  rewrites the demo guide every 10 s).
+- **Playback stalls (Apple)**: bigger forward buffer, ExoPlayer-style resume after a stall, the live proxy reconnects
+  to the line silently; stall telemetry in the log (`NxStall`).

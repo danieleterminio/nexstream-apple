@@ -1,0 +1,11 @@
+Cambia fonte: tutte le fonti subito, con la qualità reale (720p, 1080p, 4K) e quelle non disponibili segnate
+Prossimo episodio parte da solo dopo 5 secondi, come su Netflix (un tasto qualsiasi lo ferma)
+Meno blocchi durante film e dirette: buffer più ampi e ripresa automatica
+Diretta: se la linea cade il canale si ricollega da solo, senza schermata di errore
+Guida TV: i buchi della guida vengono riempiti dalle altre fonti e "Dopo" indica sempre il programma giusto
+Guida TV: celle strette con il titolo, cornice del cursore dentro la cella, il cursore resta al suo posto quando la guida si aggiorna
+Barra informazioni della diretta, loghi dei canali e riga "Continua a guardare" sistemati
+Apple TV: clic su/giù del telecomando Siri cambia canale, lo scorrimento mostra solo le informazioni
+Apple TV: player di film e serie più preciso (avanti/indietro di 10 s, scorrimento con conferma, BACK)
+Nuova animazione di apertura
+Avviso quando è disponibile una nuova versione

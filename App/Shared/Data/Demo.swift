@@ -44,6 +44,21 @@ enum Demo {
         }
         core.db.setMeta("live_sync", String(Clock.now))
         if args.contains("-nxDemoEpg") { seedEpg(core) }
+        // -nxEpgRefresh (UI tests): the guide is written again every 10 s (new rows, same programmes), like a real EPG
+        // refresh under an open grid; the guide page reads it at once (.nxGuideReload)
+        if args.contains("-nxEpgRefresh") {
+            let db = core.db
+            Task.detached {
+                while true {
+                    try? await Task.sleep(nanoseconds: 10_000_000_000)
+                    // written in the opposite order each time, so every programme comes back under another row id
+                    let progs: [ProgrammeEntity] = Array(db.allProgrammesBetween(0, Millis.max).reversed())
+                    db.replaceProgrammes(progs)
+                    NxLog.i("Demo", "guide rewritten (\(progs.count) rows)")
+                    await MainActor.run { NotificationCenter.default.post(name: .nxGuideReload, object: nil) }
+                }
+            }
+        }
         // -nxNoProfiles: the very first start, before any profile exists
         if core.db.profiles().isEmpty && !args.contains("-nxNoProfiles") {
             let id = core.profiles.add(name: "Daniele", color: 1, kids: false, icon: 0, maturity: 2, pin: nil)

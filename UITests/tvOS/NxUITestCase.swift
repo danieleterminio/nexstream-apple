@@ -36,6 +36,12 @@ class NxUITestCase: XCTestCase {
         app = XCUIApplication()
         app.launchArguments = ["-nxDemo", "-nxSeed"] + extra
         app.launch()
+        // the opening (BrandIntro, ~5 s, not skippable) eats every key: wait for it to leave first
+        let intro = el("brand.intro")
+        if intro.waitForExistence(timeout: 5) {
+            let gone = NSPredicate(format: "exists == false")
+            _ = XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: gone, object: intro)], timeout: 20)
+        }
         if let id = id {
             let ok = el(id).waitForExistence(timeout: timeout)
             if !ok { snap("launch-timeout-\(id)") }

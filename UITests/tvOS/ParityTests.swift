@@ -101,6 +101,27 @@ final class ParityTests: NxUITestCase {
         XCTAssertEqual(focusedLabel, cell, "the focus should be back on '\(cell)'")
     }
 
+    /// Guida TV with the guide written again every 10 s (-nxEpgRefresh, new rows for the same programmes): the focus
+    /// stays on the same cell through two refreshes instead of falling back to the side menu.
+    func testGuideFocusSurvivesRefresh() {
+        launch(["-nxSection", "guide", "-nxDemoEpg", "-nxEpgRefresh"], waitFor: "rail.guide", settle: 6)
+        press(.down, wait: 1.0)
+        press(.down, wait: 1.0)
+        press(.right, wait: 1.0)
+        let cell = focusedLabel
+        snap("guide-refresh-before")
+        XCTAssertTrue(focusInside("section.guide"), "the focus should be in the guide, \(focusInfo)")
+        // two refreshes (10 s apart) with the focus resting on the cell
+        pause(22)
+        snap("guide-refresh-after")
+        XCTAssertFalse(railFocused, "a guide refresh moved the focus to the side menu, \(focusInfo)")
+        XCTAssertTrue(focusInside("section.guide"), "a guide refresh took the focus out of the guide, \(focusInfo)")
+        XCTAssertEqual(focusedLabel, cell, "the focus should still be on '\(cell)'")
+        // and the remote still moves inside the grid
+        press(.right, wait: 1.0)
+        XCTAssertTrue(focusInside("section.guide"), "RIGHT after the refresh left the guide, \(focusInfo)")
+    }
+
     /// Diretta (Canali), Cerca, Impostazioni, I miei: how they open; DOWN/RIGHT keep a visible focus in the page.
     func testOtherSectionsOpenWithVisibleFocus() {
         for s in ["live", "search", "settings", "mine"] {

@@ -174,8 +174,13 @@ struct TvSourceOverlay: View {
     let onPick: (SourceRow) -> Void
     let onClose: () -> Void
     @FocusState private var focus: String?
+    /// The line the panel put the focus on by itself, and whether the viewer has moved since: until they do, the focus
+    /// follows the source playing as the lines arrive (it may be listed after the first ones).
+    @State private var placed: String? = nil
+    @State private var userMoved = false
 
     private var rows: [SourceRow] { picker.snap?.rows ?? [] }
+    private var playingId: String? { rows.first(where: { $0.isPlaying(model.stream) })?.id }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -213,20 +218,33 @@ struct TvSourceOverlay: View {
                 .padding(.vertical, 20).padding(.horizontal, 12)
             }
             .focusSection()
+            .defaultFocus($focus, playingId ?? rows.first?.id, priority: .userInitiated)
             .onChange(of: rows.map { $0.id }) { _, ids in
-                // the first lines arrived (or the panel opened empty): the focus goes to the one playing
-                if focus == nil || !(ids.contains(focus ?? "")) { placeFocus(proxy) }
+                // the first lines arrived (or the panel opened empty), or the one playing came in later: until the
+                // viewer moves, the focus goes to the one playing; after that it only moves if its line went away
+                if !userMoved || focus == nil || !(ids.contains(focus ?? "")) { placeFocus(proxy) }
             }
+            .onChange(of: playingId) { _, _ in if !userMoved { placeFocus(proxy) } }
             .onAppear { placeFocus(proxy) }
-            .onChange(of: focus) { _, f in if let f = f { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(f, anchor: .center) } } }
+            .onChange(of: focus) { _, f in
+                if let f = f {
+                    if let p = placed, f != p { userMoved = true }
+                    withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(f, anchor: .center) }
+                }
+            }
         }
     }
 
     private func placeFocus(_ proxy: ScrollViewProxy) {
-        let start = rows.first(where: { $0.isPlaying(model.stream) })?.id ?? rows.first?.id
-        guard let s = start else { return }
+        guard let s = playingId ?? rows.first?.id else { return }
+        placed = s
         proxy.scrollTo(s, anchor: .center)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { focus = s }
+        // the line may not be built yet right after a list change: try again a moment later if the focus did not land
+        for delay in [0.05, 0.3, 0.8] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                if !userMoved && placed == s && focus != s { focus = s }
+            }
+        }
     }
 
     private func choose(_ row: SourceRow) {
@@ -237,8 +255,8 @@ struct TvSourceOverlay: View {
     private func key(_ k: String) {
         let i = rows.firstIndex(where: { $0.id == focus }) ?? 0
         switch k {
-        case "up": if i > 0 { focus = rows[i - 1].id }
-        case "down": if i + 1 < rows.count { focus = rows[i + 1].id }
+        case "up": if i > 0 { userMoved = true; focus = rows[i - 1].id }
+        case "down": if i + 1 < rows.count { userMoved = true; focus = rows[i + 1].id }
         case "ok": if i < rows.count { choose(rows[i]) }
         case "back": onClose()
         default: break

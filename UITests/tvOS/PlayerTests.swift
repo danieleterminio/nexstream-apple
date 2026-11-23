@@ -242,6 +242,35 @@ final class VodPlayerTests: NxUITestCase {
         XCTAssertTrue(playerShown, "BACK on the option row must not close the player")
     }
 
+    /// "Cambia fonte" from the option row opens the source picker (not the old versions list); the focus goes inside it
+    /// and stays there while the sources are listed and checked; it does not close by itself; BACK closes it.
+    func testSourcePickerOpensAndStays() {
+        openVod()
+        press(.down, wait: 1.2)
+        for _ in 0..<6 { press(.right, wait: 0.5) }
+        var guard_ = 0
+        while focusedId != "player.option.source" && guard_ < 6 { press(.left, wait: 0.5); guard_ += 1 }
+        XCTAssertEqual(focusedId, "player.option.source", "Cambia fonte not in the option row, \(focusInfo)")
+        press(.select, wait: 2.0)
+        snap("source-panel")
+        let panel = el("player.panel.source")
+        XCTAssertTrue(panel.waitForExistence(timeout: 4), "Cambia fonte did not open")
+        XCTAssertTrue(text("Cambia fonte").exists, "the source picker title is missing")
+        // the lines come in and get checked: the panel stays open and keeps the focus
+        for i in 0..<5 {
+            pause(6)
+            snap("source-panel-\(i)")
+            XCTAssertTrue(panel.exists, "the source picker closed by itself after \((i + 1) * 6) s")
+        }
+        let rows = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'source-'")).count
+        if rows > 0 {
+            XCTAssertTrue(wait(3) { self.focusInside("player.panel.source") }, "the focus should be on a source line, \(focusInfo)")
+        }
+        back(wait: 1.2)
+        XCTAssertTrue(waitGone(panel, 4), "BACK should close Cambia fonte")
+        XCTAssertTrue(playerShown, "closing the picker must not close the player")
+    }
+
     /// Credits: "Prossimo episodio" counts 5 s down and plays the next episode by itself.
     func testCreditsCountdownPlaysNextEpisode() {
         openVod(panel: "credits")
