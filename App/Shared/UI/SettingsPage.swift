@@ -346,8 +346,8 @@ private struct SettingsRows: View {
     @EnvironmentObject var app: AppModel
     #if os(tvOS)
     @ObservedObject private var remoteHost = RemoteHost.shared
-    @ObservedObject private var updates = AppUpdates.shared
     #endif
+    @ObservedObject private var updates = AppUpdates.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: Metrics.tv ? 4 : 0) {
