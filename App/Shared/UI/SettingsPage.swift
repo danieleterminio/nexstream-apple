@@ -346,6 +346,7 @@ private struct SettingsRows: View {
     @EnvironmentObject var app: AppModel
     #if os(tvOS)
     @ObservedObject private var remoteHost = RemoteHost.shared
+    @ObservedObject private var updates = AppUpdates.shared
     #endif
 
     var body: some View {
@@ -497,6 +498,12 @@ private struct SettingsRows: View {
         SettingRow(icon: "info.circle", title: "NexStream \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")",
                    sub: "Stream4Me \(state.engineVersion)", chevron: false) {}
             .nxFocusKey(SettingsRows.firstKey)
+        // app updates: a sideloaded app cannot install itself, so this only says that a new version is out
+        if let r = updates.available {
+            SettingRow(icon: "arrow.down.circle", title: "Nuova versione disponibile \(r.versionName)",
+                       sub: r.notes.first ?? "Si installa come le versioni precedenti.") { app.presentUpdate(r) }
+                .accessibilityIdentifier("settings.update")
+        }
     }
 
     private func hours(_ h: Int) -> String { h == 0 ? "Mai" : (h == 1 ? "1 ora" : "\(h) ore") }
