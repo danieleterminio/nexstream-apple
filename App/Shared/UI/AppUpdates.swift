@@ -57,6 +57,12 @@ final class AppUpdates: ObservableObject {
 
     /// Cheap to call often: at most one read per `recheck` unless `force`.
     func checkIfDue(force: Bool = false) async {
+        // simulator screenshots without the key: -nxDemo -nxUpdateDemo fakes a newer release (no network)
+        if Demo.enabled, Demo.args.contains("-nxUpdateDemo") {
+            available = AppleRelease(versionName: "1.4.0-test", build: Self.installedBuild + 1, minVersion: 0,
+                                     notes: ["Prova del sistema di avvisi aggiornamenti", "Pannello mostrato una sola volta per versione", "Riga in Impostazioni, Informazioni"])
+            return
+        }
         guard enabled, !checking else { return }
         if !force, let l = lastCheck, Date().timeIntervalSince(l) < Self.recheck { return }
         checking = true
