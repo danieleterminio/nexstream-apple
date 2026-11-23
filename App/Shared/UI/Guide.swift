@@ -508,11 +508,9 @@ extension Notification.Name {
     static let nxGuideReload = Notification.Name("nx.guide.reload")
 }
 
-#if os(tvOS)
-/// What has the focus in the guide grid: a channel head, or a programme of a channel by its start (0 = the channel's
+/// What has the focus in the guide grid (Apple TV; the key is passed on every platform): a channel head, or a programme of a channel by its start (0 = the channel's
 /// only "now" cell when it has no guide).
 enum GuideFocus: Hashable {
     case head(String)
     case cell(String, Millis)
 }
-#endif
