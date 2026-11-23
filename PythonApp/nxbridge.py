@@ -585,7 +585,18 @@ def _resolve_limited(item_json):
 _QRANK = {'4K': 4, 'FHD': 3, 'HD': 2, 'SD': 1, '': 0}
 
 
+# Servers that play through ONE local proxy of the add-on (vidxgo: a single 127.0.0.1 relay, restarted by every
+# resolve): checking them in the background would stop the stream that is playing. They are listed as playable and
+# resolved only when picked.
+SINGLE_PROXY_SERVERS = ('vidxgo',)
+
+
 def _check_one(job, sid):
+    with job.lock:
+        server = ((job.row(sid) or {}).get('server') or '').lower()
+    if server in SINGLE_PROXY_SERVERS:
+        job.update(sid, status='ok', quality='', codec='', note='Si controlla quando la scegli')
+        return
     job.update(sid, status='checking')
     r = _resolve_limited(job.items[sid])
     urls = r.get('urls') or []
