@@ -199,9 +199,9 @@ final class LivePlayerModel: ObservableObject {
     private func refreshGuide() {
         if let e = channel?.epgId {
             let t = Clock.now
-            let list = core.db.upcoming(e, now: t, limit: 2)
-            now = list.first { $0.start <= t }
-            next = list.first { $0.start > t }
+            let nn = core.db.nowAndNext(e, at: t)
+            now = nn.now
+            next = nn.next
             nowMeta = now.flatMap { core.meta.get(core.meta.keyOf($0)) }.flatMap { $0.found ? $0 : nil }
         } else { now = nil; next = nil; nowMeta = nil }
         publish()

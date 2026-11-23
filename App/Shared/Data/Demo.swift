@@ -101,11 +101,23 @@ enum Demo {
                 let s = shows[j % shows.count]
                 let len = Millis([45, 60, 90, 120, 30][(j * 7 + i) % 5]) * Clock.minute
                 progs.append(ProgrammeEntity(epgId: e, start: t, stop: t + len, title: s.0, desc: s.3, category: s.2, kind: s.1, live: s.1 == "sport", src: "demo"))
+                // the real guides' glitches, so the grid and the player's "Dopo:" meet them on the build machines: the
+                // same row twice (channel 2), short news flashes of 2 and 6 minutes between programmes (channels 3, 5)
+                if i == 1 { progs.append(ProgrammeEntity(epgId: e, start: t, stop: t + len, title: s.0, desc: s.3, category: s.2, kind: s.1, src: "demo")) }
                 t += len
+                if i == 2 || i == 4 {
+                    let flash = Millis(j % 2 == 0 ? 2 : 6) * Clock.minute
+                    progs.append(ProgrammeEntity(epgId: e, start: t, stop: t + flash, title: j % 2 == 0 ? "Tg flash" : "Meteo", category: "Notiziario", kind: "news", src: "demo"))
+                    t += flash
+                }
                 j += 1
             }
         }
         core.db.replaceLive(core.db.categories("live"), chans)
         core.db.replaceProgrammes(progs)
+        // the made-up guide stays: no real guide download replacing it half way through a test (the demo channels carry
+        // real names, so a download matched them and swapped every row and epgId under the open grid)
+        core.db.setMeta("epg_ver", EpgRepository.version)
+        core.db.setMeta("epg_sync", String(Clock.now))
     }
 }

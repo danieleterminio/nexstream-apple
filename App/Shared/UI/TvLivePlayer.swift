@@ -319,26 +319,31 @@ struct TvLiveLayer: View {
         .ignoresSafeArea()
     }
 
+    /// Android TvInfoBar, point for dp ×2: logo · number · name · quality · IN DIRETTA; the title; "21:50 – 22:35 · S8 E18";
+    /// the progress and the time left; "Dopo: 22:40 Titolo". Every line is one line, cut with "…" inside the safe area.
     @ViewBuilder private var infoBar: some View {
         if let c = model.channel {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 10) {
                 channelLine(c)
-                Text(title).font(NxFont.display(26, .bold)).foregroundStyle(.white).lineLimit(1)
+                Text(title).font(NxFont.display(24, .bold)).foregroundStyle(.white).lineLimit(1).truncationMode(.tail)
                 timeLine
                 if let n = model.next {
-                    Text("Dopo: \(TimeText.time(n.start))  \(n.title)").font(NxFont.ui(13, .semibold)).foregroundStyle(NxColor.textMuted).lineLimit(1)
+                    Text("Dopo: \(TimeText.time(n.start))  \(n.title)").font(NxFont.ui(13, .medium)).foregroundStyle(NxColor.textDim).lineLimit(1)
                 }
             }
-            .frame(maxWidth: 1500, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("player.infobar")
         }
     }
 
     private func channelLine(_ c: ChannelEntity) -> some View {
         HStack(spacing: 18) {
-            TvChannelMark(channel: c, width: 130, height: 64)
-            if c.num > 0 { Text("\(c.num)").font(NxFont.ui(16, .heavy)).foregroundStyle(.white).monospacedDigit() }
-            Text(c.name).font(NxFont.ui(16, .bold)).foregroundStyle(.white).lineLimit(1)
-            QualityBadge(quality: model.playing.1)
+            // the broadcaster's logo as it is (no tile around it), like the Android bar: 22 dp tall, at most 70 dp wide
+            if c.logo != nil || c.icon != nil { ChannelLogo(channel: c, height: 22, maxWidth: 70).fixedSize(horizontal: false, vertical: true) }
+            if c.num > 0 { Text("\(c.num)").font(NxFont.ui(15, .heavy)).foregroundStyle(.white).monospacedDigit() }
+            Text(c.name).font(NxFont.ui(15, .bold)).foregroundStyle(NxColor.textMuted).lineLimit(1).layoutPriority(-1)
+            QualityBadge(quality: model.playing.1.isEmpty ? c.quality : model.playing.1)
             TvLiveBadge()
             if model.paused { NxTag(text: "In pausa", color: Color.white.opacity(0.22)) }
         }
@@ -346,11 +351,14 @@ struct TvLiveLayer: View {
 
     @ViewBuilder private var timeLine: some View {
         if let s = model.showing, s.start != nil {
-            HStack(spacing: 20) {
-                if let t = s.timeLabel() { Text(t).font(NxFont.ui(13, .bold)).foregroundStyle(.white).monospacedDigit() }
-                if let p = s.progress() { TvProgressLine(value: p, height: 6).frame(width: 460) }
-                if let w = s.whenLabel() { Text(w).font(NxFont.ui(12, .semibold)).foregroundStyle(NxColor.textMuted) }
-                if let l = s.cardLine, l != title { Text("· " + l).font(NxFont.ui(12, .semibold)).foregroundStyle(NxColor.textMuted).lineLimit(1) }
+            let range = s.start.map { st in TimeText.time(st) + (s.stop.map { " – " + TimeText.time($0) } ?? "") }
+            let line = [range, s.cardLine.flatMap { $0 == title ? nil : $0 }].compactMap { $0 }.joined(separator: "  ·  ")
+            if !line.isEmpty { Text(line).font(NxFont.ui(13, .semibold)).foregroundStyle(NxColor.textMuted).lineLimit(1).monospacedDigit() }
+            if let p = s.progress() {
+                HStack(spacing: 20) {
+                    TvProgressLine(value: p, height: 6).frame(width: 520)
+                    if let w = s.whenLabel() { Text(w).font(NxFont.ui(12, .medium)).foregroundStyle(NxColor.textDim).lineLimit(1) }
+                }
             }
         } else {
             Text("Nessuna informazione sul programma").font(NxFont.ui(13, .semibold)).foregroundStyle(NxColor.textMuted)
@@ -640,7 +648,8 @@ struct TvChannelMark: View {
         ZStack {
             RoundedRectangle(cornerRadius: 10, style: .continuous).fill(NxColor.ink2)
             if channel.logo != nil || channel.icon != nil {
-                ChannelLogo(channel: channel, height: height / 2 - 6)
+                // the logo fills the tile (less a margin) and sits in its centre, whatever its shape
+                ChannelLogo(channel: channel, height: (height - 20) / Metrics.unit, centered: true, maxWidth: (width - 24) / Metrics.unit)
             } else {
                 Text(channel.name).font(NxFont.ui(11, .heavy)).foregroundStyle(.white).lineLimit(2).multilineTextAlignment(.center).padding(.horizontal, 8)
             }
