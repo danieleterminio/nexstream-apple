@@ -364,14 +364,19 @@ struct GuideView: View {
                     NxAction("Guarda \(c.name)", icon: "play.fill") { app.play(c) },
                     NxAction(fav ? "Togli dai preferiti" : "Aggiungi ai preferiti", icon: fav ? "star.slash" : "star") { app.toggleFavorite(c) },
                 ])
-            }, onPlay: { app.play(c) }) {
+            }, onPlay: { app.play(c) }, flat: true) {
+                // Android ChannelHead: the logo centred in the cell (22 dp tall, at most the cell less 14 dp), the number under it
                 VStack(spacing: Metrics.u(3)) {
-                    ChannelLogo(channel: c, height: Metrics.tv ? 22 : 20).frame(maxWidth: headW - Metrics.u(14), maxHeight: Metrics.u(26), alignment: .center)
-                    if c.num > 0 { Text("\(c.num)").font(NxFont.ui(10, .bold)).foregroundStyle(NxColor.textDim) }
+                    ChannelLogo(channel: c, height: Metrics.tv ? 22 : 20, centered: true, maxWidth: headW / Metrics.unit - 14)
+                    if c.num > 0 { Text("\(c.num)").font(NxFont.ui(10, .bold)).foregroundStyle(NxColor.textDim).lineLimit(1) }
                 }
                 .frame(width: headW - gap, height: rowH)
                 .background(NxColor.ink1, in: RoundedRectangle(cornerRadius: Metrics.u(4), style: .continuous))
+                .overlay(alignment: .topTrailing) {
+                    if store.favorites.contains(c.streamId) { Image(systemName: "star.fill").font(.system(size: 9 * Metrics.type)).foregroundStyle(NxColor.textMuted).padding(Metrics.u(3)) }
+                }
             }
+            .accessibilityLabel(c.name)
             .padding(.trailing, gap)
             ZStack(alignment: .topLeading) {
                 if list.isEmpty {
@@ -382,6 +387,7 @@ struct GuideView: View {
                     let s = store.showing(c, p)
                     let onAir = p.start <= now && p.stop > now
                     cell(title: s.cardTitle, sub: TimeText.time(p.start) + (s.cardLine.map { " · " + $0 } ?? ""), width: max(2, x1 - x0 - gap), onAir: onAir, past: p.stop <= now,
+                         sliver: p.stop - p.start < GuideView.sliver,
                          progress: onAir ? s.progress(now) : nil,
                          action: { if onAir { app.play(c) } else { app.openShowing(s) } },
                          long: {
@@ -401,23 +407,37 @@ struct GuideView: View {
         #endif
     }
 
-    private func cell(title: String, sub: String?, width: CGFloat, onAir: Bool, past: Bool, progress: Double?, action: @escaping () -> Void, long: (() -> Void)?, play: (() -> Void)?) -> some View {
-        CardButton(action: action, radius: Metrics.u(4), onLong: long, onPlay: play) {
+    /// Programmes shorter than this (gaps and glitches in the guide data) are slivers: drawn, but the focus skips them
+    /// (Android GuideScreen SLIVER).
+    static let sliver: Millis = 3 * Clock.minute
+
+    /// One programme (Android GuideCell): lighter when on air, how far it is as a red line along the bottom. A narrow
+    /// cell still says what it is: the title in small type, cut with "…", down to a few letters; only a sliver is bare.
+    private func cell(title: String, sub: String?, width: CGFloat, onAir: Bool, past: Bool, sliver: Bool = false, progress: Double?, action: @escaping () -> Void, long: (() -> Void)?, play: (() -> Void)?) -> some View {
+        CardButton(action: action, radius: Metrics.u(4), onLong: long, onPlay: play, flat: true) {
             ZStack(alignment: .bottomLeading) {
                 (onAir ? NxColor.ink4 : NxColor.ink2)
                 if width > Metrics.u(40) {
+                    let narrow = width < Metrics.u(110)
                     VStack(alignment: .leading, spacing: Metrics.u(2)) {
-                        Text(title).font(NxFont.ui(13, .bold)).foregroundStyle(past ? NxColor.textDim : NxColor.text).lineLimit(width < Metrics.u(110) ? 2 : 1)
-                        if let s = sub, width >= Metrics.u(110) || Metrics.tv { Text(s).font(NxFont.ui(11, .medium)).foregroundStyle(NxColor.textDim).lineLimit(1) }
+                        Text(title).font(NxFont.ui(13, .bold)).foregroundStyle(past ? NxColor.textDim : NxColor.text).lineLimit(narrow ? 2 : 1)
+                        if let s = sub, !narrow { Text(s).font(NxFont.ui(11, .medium)).foregroundStyle(NxColor.textDim).lineLimit(1) }
                     }
                     .padding(.horizontal, Metrics.u(7)).padding(.vertical, Metrics.u(6))
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                } else if width > Metrics.u(20) && !sliver {
+                    Text(title).font(NxFont.ui(10, .bold)).foregroundStyle(past ? NxColor.textDim : NxColor.textMuted)
+                        .lineLimit(3).truncationMode(.tail)
+                        .padding(.horizontal, Metrics.u(3)).padding(.vertical, Metrics.u(5))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
                 if let p = progress { Rectangle().fill(NxColor.accent).frame(width: max(2, width * p), height: Metrics.u(2.5)) }
             }
             .frame(width: width, height: rowH)
             .clipShape(RoundedRectangle(cornerRadius: Metrics.u(4), style: .continuous))
         }
+        .disabled(sliver)
+        .accessibilityLabel(title)
     }
 
     private func load() async {
@@ -426,6 +446,10 @@ struct GuideView: View {
         let db = app.core.db
         let list = await Task.detached(priority: .userInitiated) { db.programmesForChannels(ids, from, to) }.value
         if Task.isCancelled { return }
-        byEpg = list.grouped { $0.epgId }
+        // a feed can list the same programme twice (same start, same title): one cell, not two on top of each other
+        byEpg = list.grouped { $0.epgId }.mapValues { l in
+            var seen = Set<String>()
+            return l.filter { seen.insert("\($0.start)|\($0.title)").inserted }
+        }
     }
 }

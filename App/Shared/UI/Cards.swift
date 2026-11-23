@@ -28,18 +28,27 @@ struct CardButton<Label: View>: View {
     var onLong: (() -> Void)? = nil
     /// Apple TV: the play/pause key on the card plays it straight away (something playable).
     var onPlay: (() -> Void)? = nil
+    /// Apple TV: a cell of a grid (the guide) — the white frame is drawn inside the cell and nothing grows, so the focus
+    /// never covers the neighbours (Android GuideSlot: a 3 dp border inside the cell, no zoom).
+    var flat: Bool = false
     @ViewBuilder var label: () -> Label
 
     var body: some View {
         #if os(tvOS)
         Button(action: action) {
             Focusable(onFocus: onFocus) { focused in
-                // docs/tv-experience.md §2: scale 1.06, a 6 pt white frame, a slight shadow
-                label()
-                    .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(Color.white, lineWidth: focused ? 6 : 0))
-                    .scaleEffect(focused ? 1.06 : 1)
-                    .shadow(color: .black.opacity(focused ? 0.55 : 0), radius: 16, y: 8)
-                    .animation(.easeOut(duration: 0.16), value: focused)
+                if flat {
+                    label()
+                        .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Color.white, lineWidth: focused ? 6 : 0))
+                        .animation(.easeOut(duration: 0.12), value: focused)
+                } else {
+                    // docs/tv-experience.md §2: scale 1.06, a 6 pt white frame, a slight shadow
+                    label()
+                        .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(Color.white, lineWidth: focused ? 6 : 0))
+                        .scaleEffect(focused ? 1.06 : 1)
+                        .shadow(color: .black.opacity(focused ? 0.55 : 0), radius: 16, y: 8)
+                        .animation(.easeOut(duration: 0.16), value: focused)
+                }
             }
         }
         .buttonStyle(NxPlainStyle(scale: 1))
@@ -376,25 +385,50 @@ struct CardRow<Data: RandomAccessCollection, Card: View>: View where Data.Elemen
     var body: some View {
         VStack(alignment: .leading, spacing: Metrics.u(8)) {
             SectionHeader(title: title, sub: sub, tag: tag)
+            #if os(tvOS)
+            // Apple TV: the focused card always comes to the row's left edge (the page margin), Netflix-style, like the
+            // Android rows (NxScroll.RowSpec): the row glides by one card at every press instead of jumping a screen at
+            // the right edge, and nothing is left half cut on the left.
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(alignment: .top, spacing: Metrics.cardGap) {
+                        ForEach(items) { item in
+                            card(item)
+                                .background(alignment: .leading) {
+                                    // a mark one page margin before the card: scrolled to the row's leading edge
+                                    Color.clear.frame(width: Metrics.gutter + 1, height: 1)
+                                        .alignmentGuide(.leading) { _ in Metrics.gutter }
+                                        .id(RowLead(id: AnyHashable(item.id)))
+                                }
+                                .environment(\.nxCardHook, {
+                                    withAnimation(.easeOut(duration: 0.24)) { proxy.scrollTo(RowLead(id: AnyHashable(item.id)), anchor: .leading) }
+                                })
+                        }
+                        if let end = onEnd { Color.clear.frame(width: 1, height: 1).onAppear(perform: end) }
+                    }
+                    .padding(.horizontal, Metrics.gutter)
+                    .padding(.vertical, 22)
+                }
+                .scrollClipDisabled()
+            }
+            .focusSection()
+            #else
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(alignment: .top, spacing: Metrics.cardGap) {
                     ForEach(items) { item in card(item) }
                     if let end = onEnd { Color.clear.frame(width: 1, height: 1).onAppear(perform: end) }
                 }
                 .padding(.horizontal, Metrics.gutter)
-                #if os(tvOS)
-                .padding(.vertical, 22)
-                #else
                 .padding(.vertical, 2)
-                #endif
             }
             .scrollClipDisabled()
-            #if os(tvOS)
-            .focusSection()
             #endif
         }
     }
 }
+
+/// Apple TV: the id of the mark that brings a card of a row to the row's left edge.
+struct RowLead: Hashable { let id: AnyHashable }
 
 /// A row of on-demand titles in the shape its kind asks for.
 struct VodRowView: View {
