@@ -11,7 +11,9 @@ struct VodPlayerView: View {
     let width: CGFloat
     @EnvironmentObject var app: AppModel
     @StateObject private var chrome = ChromeState()
-    @State private var countdown = 10
+    @State private var countdown = 5
+    /// The 5 s countdown of "Prossimo episodio" during the credits (Netflix-like), on every platform.
+    @StateObject private var nextCount = NextCountdown()
     /// Apple TV: the button of the resolving / failed / ended / still-watching screens that takes the focus.
     @FocusState private var phaseFocus: Int?
     #if os(iOS)
@@ -30,6 +32,8 @@ struct VodPlayerView: View {
     }
 
     private var request: PlayRequest { model.request }
+    /// The credits buttons are on screen (iPhone / iPad; the TV layer has its own).
+    private var creditsOn: Bool { model.creditsVisible && model.nextRequest(auto: false) != nil }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -42,6 +46,13 @@ struct VodPlayerView: View {
             #endif
         }
         .onAppear { chrome.show() }
+        .onChange(of: model.paused) { _, p in if p { nextCount.cancel() } }
+        #if os(iOS)
+        .onChange(of: creditsOn) { _, on in
+            if on { startCreditsCountdown(nextCount, model: model, app: app) } else { nextCount.reset() }
+        }
+        .onChange(of: chrome.visible) { _, v in if v { nextCount.cancel() } }
+        #endif
         .onReceive(NotificationCenter.default.publisher(for: .nxRemoteKey)) { n in
             #if os(tvOS)
             // while the video plays TvVodLayer takes the keys; the other screens are two buttons at most
@@ -132,14 +143,15 @@ struct VodPlayerView: View {
                 .contentShape(Rectangle())
                 .gesture(
                     SpatialTapGesture(count: 2).onEnded { v in doubleTap(left: v.location.x < g.size.width / 2) }
-                        .exclusively(before: TapGesture().onEnded { if model.phase == .playing { chrome.toggle() } })
+                        .exclusively(before: TapGesture().onEnded { nextCount.cancel(); if model.phase == .playing { chrome.toggle() } })
                 )
-                .simultaneousGesture(DragGesture(minimumDistance: 14).onChanged { v in drag(v, g.size) }.onEnded { _ in dragAxis = 0 })
+                .simultaneousGesture(DragGesture(minimumDistance: 14).onChanged { v in nextCount.cancel(); drag(v, g.size) }.onEnded { _ in dragAxis = 0 })
         }
     }
 
     private func doubleTap(left: Bool) {
         guard model.phase == .playing, model.duration > 0 else { return }
+        nextCount.cancel()
         model.seekBy(left ? -10_000 : 10_000)
         feedback.show(left ? .back : .forward)
     }
@@ -225,7 +237,7 @@ struct VodPlayerView: View {
 
     @ViewBuilder private var playingOverlay: some View {
         #if os(tvOS)
-        TvVodLayer(model: model, player: player, chrome: chrome)
+        TvVodLayer(model: model, player: player, chrome: chrome, countdown: nextCount)
         #else
         if player.state == .opening || player.state == .buffering { BrandLoader(size: full ? 56 : 40) }
         if chrome.visible || model.paused || model.seekTarget != nil { controlsView.transition(.opacity) }
@@ -234,14 +246,12 @@ struct VodPlayerView: View {
                 Spacer()
                 HStack(spacing: Metrics.u(8)) {
                     Spacer()
-                    NxButton("Titoli di coda", kind: .secondary) { model.creditsDismissed = true }
-                    NxButton("Prossimo episodio", icon: "forward.end.fill", kind: .primary) { app.play(n) }
+                    NxButton("Guarda i titoli di coda", kind: .secondary) { nextCount.reset(); model.creditsDismissed = true }
+                        .accessibilityIdentifier("player.credits.watch")
+                    NextEpisodeButton(countdown: nextCount, primary: true) { nextCount.reset(); app.play(n) }
                 }
-                #if os(tvOS)
-                .focusSection()
-                #endif
             }
-            .padding(.horizontal, Metrics.u(16)).padding(.bottom, Metrics.u(Metrics.tv ? 110 : (full ? 96 : 44)))
+            .padding(.horizontal, Metrics.u(16)).padding(.bottom, Metrics.u(full ? 96 : 44))
         }
         #endif
     }
@@ -337,7 +347,7 @@ struct VodPlayerView: View {
         #endif
         .task {
             guard autoplay, let n = next else { return }
-            countdown = 10
+            countdown = 5
             while countdown > 0 {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 if Task.isCancelled { return }
@@ -360,7 +370,7 @@ struct VodPlayerView: View {
             if autoplay {
                 ZStack {
                     Circle().stroke(Color.white.opacity(0.3), lineWidth: 6)
-                    Circle().trim(from: 0, to: CGFloat(countdown) / 10).stroke(Color.white, style: StrokeStyle(lineWidth: 6, lineCap: .round)).rotationEffect(.degrees(-90))
+                    Circle().trim(from: 0, to: CGFloat(countdown) / 5).stroke(Color.white, style: StrokeStyle(lineWidth: 6, lineCap: .round)).rotationEffect(.degrees(-90))
                     Text("\(countdown)").font(NxFont.display(22, .bold)).foregroundStyle(.white).monospacedDigit()
                 }
                 .frame(width: 110, height: 110)
@@ -514,4 +524,103 @@ struct VodPlayerView: View {
         .background(NxColor.bg)
     }
     #endif
+}
+
+// MARK: - next episode countdown
+
+/// Netflix-like: when the credits buttons appear, "Prossimo episodio" counts 5 s down and then plays the next episode.
+/// Any other input stops the count (the buttons stay); a stopped count does not start again for the same credits.
+@MainActor
+final class NextCountdown: ObservableObject {
+    static let seconds: Double = 5
+    @Published private(set) var startedAt: Date? = nil
+    private var task: Task<Void, Never>? = nil
+    private var stopped = false
+    var running: Bool { startedAt != nil }
+
+    func start(_ done: @escaping () -> Void) {
+        guard startedAt == nil, !stopped else { return }
+        startedAt = Date()
+        task = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(NextCountdown.seconds * 1_000_000_000))
+            guard let me = self, !Task.isCancelled, me.startedAt != nil else { return }
+            me.startedAt = nil
+            me.stopped = true
+            done()
+        }
+    }
+    /// Input other than confirming: the count stops, the buttons stay.
+    func cancel() {
+        guard startedAt != nil else { return }
+        task?.cancel()
+        startedAt = nil
+        stopped = true
+    }
+    /// The credits went away (dismissed, seek back, next episode): a later credits prompt may count again.
+    func reset() {
+        task?.cancel()
+        startedAt = nil
+        stopped = false
+    }
+}
+
+/// Starts the credits countdown when the profile wants the next episode by itself and it is not time to ask
+/// "Stai ancora guardando?" (then the buttons stay without a count and the end screen asks).
+@MainActor
+func startCreditsCountdown(_ c: NextCountdown, model: VodPlayerModel, app: AppModel) {
+    let s = app.core.settings, pid = app.pid
+    guard s.autoplay(pid), !model.paused, model.phase == .playing, model.nextRequest(auto: true) != nil else { return }
+    if app.core.watchSession.shouldAsk(hours: s.stillWatchingHours(pid), episodes: s.stillWatchingEpisodes(pid)) { return }
+    c.start { [weak model] in
+        guard let m = model, m.phase == .playing, let n = m.nextRequest(auto: true) else { return }
+        NxLog.i("NxPlayer", "credits countdown: next episode S\(n.season)E\(n.episode)")
+        app.core.watchSession.autoplayed += 1
+        app.play(n)
+    }
+}
+
+/// "Prossimo episodio" of the credits: while the countdown runs, a lighter band fills the button from the left in 5 s.
+struct NextEpisodeButton: View {
+    @ObservedObject var countdown: NextCountdown
+    /// Phone: always the white button; TV: white under the focus.
+    var primary: Bool = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Focusable { focused in
+                let white = Metrics.tv ? focused : primary
+                HStack(spacing: Metrics.u(7)) {
+                    Image(systemName: "forward.end.fill").font(.system(size: 15 * Metrics.type, weight: .bold))
+                    Text("Prossimo episodio").font(NxFont.button).lineLimit(1)
+                }
+                .foregroundStyle(white ? Color.black : Color.white)
+                .fixedSize()
+                .padding(.horizontal, Metrics.u(18))
+                .frame(height: Metrics.u(Metrics.tv ? 36 : 42))
+                .background { fill(white) }
+                .clipShape(RoundedRectangle(cornerRadius: Metrics.u(4), style: .continuous))
+                .scaleEffect(focused ? 1.06 : 1)
+                .animation(.easeOut(duration: 0.15), value: focused)
+            }
+        }
+        .buttonStyle(NxPlainStyle())
+        .accessibilityIdentifier("player.credits.next")
+        .accessibilityValue(countdown.running ? "countdown" : "")
+    }
+
+    @ViewBuilder private func fill(_ white: Bool) -> some View {
+        ZStack(alignment: .leading) {
+            (white ? Color.white : NxColor.button)
+            if let start = countdown.startedAt {
+                TimelineView(.animation) { t in
+                    let p = min(1, max(0, t.date.timeIntervalSince(start) / NextCountdown.seconds))
+                    GeometryReader { g in
+                        (white ? Color.black.opacity(0.22) : Color.white.opacity(0.32))
+                            .frame(width: g.size.width * CGFloat(p))
+                    }
+                }
+            }
+        }
+    }
 }
