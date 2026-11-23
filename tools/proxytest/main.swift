@@ -157,6 +157,9 @@ do {
     check(!p.contains("DISCONTINUITY-SEQUENCE"), "no discontinuity left the playlist yet")
     check(p.components(separatedBy: "#EXT-X-DISCONTINUITY\n").count - 1 == 2, "two discontinuity tags listed")
     check(p.contains("#EXT-X-START:TIME-OFFSET=0\n"), "the player starts at the oldest segment")
+    var short = HlsWindow()
+    for i in 0..<3 { short.append(.init(seq: i, duration: 2, discontinuity: false, data: Data(count: 10))) }
+    check(!short.playlist(target: 4, ended: false).contains("EXT-X-START"), "no start offset in a playlist shorter than 3 targets")
     check(p.contains("#EXT-X-TARGETDURATION:4\n") && !p.contains("ENDLIST"), "target and no end while live")
     for i in 30..<36 { h.append(.init(seq: i, duration: 2, discontinuity: false, data: Data(count: 1000))) }
     p = h.playlist(target: 4, ended: false)

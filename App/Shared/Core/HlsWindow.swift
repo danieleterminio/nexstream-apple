@@ -76,7 +76,10 @@ struct HlsWindow {
         for e in entries where e.seq < firstSeq && e.discontinuity { disc += 1 }
         var s = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:\(target)\n#EXT-X-MEDIA-SEQUENCE:\(firstSeq)\n"
         if disc > 0 { s += "#EXT-X-DISCONTINUITY-SEQUENCE:\(disc)\n" }
-        if startAtBeginning && !ended { s += "#EXT-X-START:TIME-OFFSET=0\n" }
+        // only when it can apply: AVPlayer refuses a start within three target durations of the end (CoreMedia -16831,
+        // seen in the CI logs) and reads the tag only at the first load, i.e. it helps when the line sent a burst
+        let listed = w.reduce(0.0) { $0 + $1.duration }
+        if startAtBeginning && !ended && listed >= Double(3 * target) + 1 { s += "#EXT-X-START:TIME-OFFSET=0\n" }
         // every listed segment keeps its own tag; the sequence above counts only the tags that left the playlist, so
         // each segment's discontinuity number stays the same from one reload to the next
         for e in w {
