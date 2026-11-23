@@ -47,7 +47,8 @@ struct RootView: View {
         ZStack {
             NxColor.bg.ignoresSafeArea()
             content
-                .disabled(playerShown || !app.sheets.isEmpty)
+                // nothing under the opening takes the focus or a tap while it plays (it is not skippable)
+                .disabled(playerShown || !app.sheets.isEmpty || intro)
                 #if os(tvOS)
                 // a gate (VPN, line, "Chi guarda?") has nothing behind it: BACK asks before leaving the app
                 .onExitCommand(perform: app.profile == nil || app.session == nil || !app.vpn || app.onboardingFor != nil ? { app.askExit() } : nil)
@@ -64,7 +65,8 @@ struct RootView: View {
             #if os(tvOS)
             RemotePairBanner().zIndex(3)
             #endif
-            if intro { BrandIntro { withAnimation(.easeOut(duration: 0.35)) { intro = false } }.zIndex(4) }
+            // the opening, at every cold start (this view is built once per launch); it fades itself out at the end
+            if intro { BrandIntro { intro = false }.zIndex(4) }
         }
         .animation(.easeInOut(duration: 0.25), value: app.toast)
         .animation(.easeOut(duration: 0.28), value: playerShown)
@@ -101,27 +103,6 @@ struct RootView: View {
             }
         } else {
             ProfilesView()
-        }
-    }
-}
-
-/// Opening animation: the mark breathes once on the page colour, then the app shows.
-struct BrandIntro: View {
-    let onDone: () -> Void
-    @State private var scale = 0.86
-    @State private var glow = 0.0
-    var body: some View {
-        ZStack {
-            NxColor.bg.ignoresSafeArea()
-            Circle().fill(NxColor.accent.opacity(0.35)).frame(width: Metrics.u(220), height: Metrics.u(220)).blur(radius: Metrics.u(60)).opacity(glow)
-            Image("BrandSymbol").resizable().scaledToFit().frame(width: Metrics.u(110), height: Metrics.u(110)).scaleEffect(scale)
-        }
-        .task {
-            withAnimation(.easeInOut(duration: 0.7)) { scale = 1.04; glow = 1 }
-            try? await Task.sleep(nanoseconds: 750_000_000)
-            withAnimation(.easeInOut(duration: 0.4)) { scale = 1.0; glow = 0.5 }
-            try? await Task.sleep(nanoseconds: 450_000_000)
-            onDone()
         }
     }
 }
