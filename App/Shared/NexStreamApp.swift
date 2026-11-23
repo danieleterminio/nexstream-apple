@@ -18,7 +18,7 @@ struct NexStreamApp: App {
                 .tint(.white)
                 .onOpenURL { app.core.handle(url: $0) }
                 .onChange(of: phase) { _, p in
-                    if p == .active { Vpn.shared.refresh(); app.core.checkAlerts(); PlatformServices.shared.appBecameActive(); app.core.sync.kick(after: 0.5) }
+                    if p == .active { Vpn.shared.refresh(); app.checkForUpdate(); app.core.checkAlerts(); PlatformServices.shared.appBecameActive(); app.core.sync.kick(after: 0.5) }
                     if p == .background { app.core.sync.kick(after: 0) }
                     #if os(tvOS)
                     if p == .active { RemoteHost.shared.start() } else if p == .background { RemoteHost.shared.stop() }
@@ -77,6 +77,9 @@ struct RootView: View {
             app.core.downloads.wake()
             #endif
         }
+        // app updates (notice only): at launch and every time the VPN comes up; AppUpdates spaces the reads out
+        .onChange(of: app.vpn) { _, on in if on { app.checkForUpdate() } }
+        .task { app.checkForUpdate() }
         .onReceive(NotificationCenter.default.publisher(for: .nxRemoteKey)) { n in if (n.object as? String) == "home" { app.goHome() } }
     }
 
