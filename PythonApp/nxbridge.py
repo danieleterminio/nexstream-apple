@@ -354,6 +354,8 @@ def resolve(server_item_json):
     out = []
     try:
         mod = __import__('servers.%s' % name, fromlist=['servers.%s' % name])
+        if name in SINGLE_PROXY_SERVERS:
+            _keep_proxy_alive(mod)
         if hasattr(mod, 'test_video_exists'):
             ok, msg = mod.test_video_exists(s.url)
             if not ok:
@@ -369,6 +371,19 @@ def resolve(server_item_json):
     except Exception:
         return json.dumps({'urls': out, 'error': traceback.format_exc()[-600:]})
     return json.dumps({'urls': out, 'error': None}, ensure_ascii=False)
+
+
+def _keep_proxy_alive(mod):
+    """vidxgo stops its local proxy after 10 s without requests unless Kodi's player says it is playing, and the
+    headless stubs never do: a paused video, or a player that has buffered a minute ahead (ExoPlayer waits until its
+    buffer drops from 60 to 20 s; AVPlayer the same), found the proxy gone and failed over to another source. Our app
+    owns the player, so the proxy stays up until the next vidxgo resolve replaces it (or the app exits)."""
+    try:
+        for k in ('WD_IDLE_PLAYED', 'WD_IDLE_NEVER'):
+            if getattr(mod, k, 0) < 6 * 3600:
+                setattr(mod, k, 6 * 3600)
+    except Exception:
+        log.warning(traceback.format_exc())
 
 
 def play(item_json, max_servers=4, defer_single_proxy=0):
