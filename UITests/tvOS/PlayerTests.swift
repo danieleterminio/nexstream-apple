@@ -132,9 +132,13 @@ final class VodPlayerTests: NxUITestCase {
 
     // MARK: v1.4 Siri Remote seeking, panels, credits countdown
 
-    /// Elapsed time on the bar in seconds (the first "12:34" text that is not a "-" remaining time).
+    /// Elapsed time on the bar in seconds: the first "12:34" text inside the player's controls that is not a "-"
+    /// remaining time (the side menu's clock is in the tree too, behind the player).
     private var elapsed: Int? {
-        guard let t = timeTexts.first(where: { !$0.hasPrefix("-") }) else { return nil }
+        let c = el("player.controls")
+        guard c.exists else { return nil }
+        let texts = c.staticTexts.allElementsBoundByIndex.map { $0.label }
+        guard let t = texts.first(where: { $0.range(of: #"^\d{1,2}:\d{2}(:\d{2})?$"#, options: .regularExpression) != nil }) else { return nil }
         return t.split(separator: ":").compactMap { Int($0) }.reduce(0) { $0 * 60 + $1 }
     }
 
@@ -164,18 +168,18 @@ final class VodPlayerTests: NxUITestCase {
         XCTAssertEqual(focusedId, "player.surface", "seeking must not move the focus, \(focusInfo)")
     }
 
-    /// A held click keeps seeking and accelerates: 3 s held moves well over a minute.
+    /// A held click keeps seeking and accelerates: 1.5 s held moves well over a minute (10, 10, 20, 30, 60, 120 s steps).
     func testHeldClickAccelerates() {
         openVod()
         press(.select, wait: 1.5)
         guard let before = elapsed else { return XCTFail("no elapsed time on the bar") }
-        remote.press(.right, forDuration: 3.0)
+        remote.press(.right, forDuration: 1.5)
         pause(0.3)
         snap("holding-right-released")
         pause(1.5)
         guard let after = elapsed else { return XCTFail("no elapsed time after the hold") }
         snap("after-hold")
-        XCTAssertGreaterThan(after - before, 90, "holding RIGHT for 3 s should seek more than 90 s (\(before) → \(after))")
+        XCTAssertGreaterThan(after - before, 90, "holding RIGHT for 1.5 s should seek more than 90 s (\(before) → \(after))")
         XCTAssertEqual(focusedId, "player.surface", "holding must not move the focus, \(focusInfo)")
         assertAlive("held click")
     }
@@ -227,7 +231,7 @@ final class VodPlayerTests: NxUITestCase {
         press(.select, wait: 2.0)
         snap("episodes-panel")
         XCTAssertTrue(el("player.panel.episodes").waitForExistence(timeout: 4), "Episodi did not open")
-        XCTAssertFalse(focusedId.isEmpty, "the Episodi panel has no focus")
+        XCTAssertTrue(wait(3) { self.focusInside("player.panel.episodes") }, "the focus should be inside the Episodi panel, \(focusInfo)")
         press(.down, wait: 0.6)
         snap("episodes-moved")
         back(wait: 1.2)
