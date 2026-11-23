@@ -33,6 +33,40 @@ final class EpgRepository {
             if src == nil { src = source }
             return true
         }
+
+        /// The first source can leave holes inside the span it covers (Sky drops an event now and then: Rai 2 on 22 Nov
+        /// had nothing between "The Rookie" ending at 22:35 and "La Domenica Sportiva" at 23:20, so the guide showed a gap
+        /// and the player's "Dopo:" jumped to 23:20). `add` only extends the span, so the other sources never reached
+        /// those holes. Here every hole of 5 min or more takes the programmes another source starts inside it, cut at
+        /// the hole's end; the broadcaster's own schedule (RaiPlay, Mediaset) first, then the other feeds.
+        @discardableResult
+        func fillHoles(_ others: [ProgrammeEntity]) -> Int {
+            if items.isEmpty || others.isEmpty { return 0 }
+            let own = items.sortedBy { $0.start }
+            var holes = [(Millis, Millis)]()
+            var reach = own[0].stop
+            for p in own.dropFirst() {
+                if p.start - reach >= 5 * Clock.minute { holes.append((reach, p.start)) }
+                reach = max(reach, p.stop)
+            }
+            if holes.isEmpty { return 0 }
+            func rank(_ s: String) -> Int { s == "rai" || s == "mediaset" ? 0 : 1 }
+            let bySrc = Dictionary(grouping: others, by: { $0.src }).sorted { (rank($0.key), $0.key) < (rank($1.key), $1.key) }
+            var added = 0
+            for (a, b) in holes {
+                for (_, list) in bySrc {
+                    let inside = list.filter { $0.start >= a - 2 * Clock.minute && $0.start < b - 2 * Clock.minute }.sortedBy { $0.start }
+                    if inside.isEmpty { continue }
+                    for p in inside {
+                        var x = p; x.start = max(p.start, a); x.stop = min(p.stop, b)
+                        if x.stop - x.start >= 2 * Clock.minute { items.append(x); added += 1 }
+                    }
+                    break
+                }
+            }
+            if added > 0 { items.sort { $0.start < $1.start } }
+            return added
+        }
     }
 
     private struct Feed {
@@ -44,7 +78,7 @@ final class EpgRepository {
     static let extUrl = "https://epgshare01.online/epgshare01/epg_ripper_IT1.xml.gz"
     static let extPrefix = "ext:"
     /// Bump when the source chain or the stored format changes: the guide is re-downloaded at the next start.
-    static let version = "6.1"
+    static let version = "6.2"
     /// Placeholders the feeds put on idle event channels, in any language: shown as one Italian line.
     private static let noEvent = Rx.i(#"\s*(no game today|no games? scheduled|no event( today)?|no live event|nessun evento( in onda)?|offline|event only|events only|coming soon)\s*"#)
     private static let feeds = [
@@ -136,6 +170,11 @@ final class EpgRepository {
                 for c in lineWanted { if let l = line[c.lineEpgId ?? ""] { accOf(c).add(l, "line") } }
             } catch { NxLog.w("NxEpg", "line feed failed: \(error)") }
         }
+
+        // holes inside the first source's span, filled from the other sources (see Acc.fillHoles)
+        var holesFilled = 0
+        for (sid, a) in acc { if let d = donors[sid] { holesFilled += a.fillHoles(d) } }
+        NxLog.i("NxEpg", "holes filled from other sources: \(holesFilled) programmes")
 
         // pictures and synopses from the other sources where the first one had none (same channel, same slot)
         var filled = 0

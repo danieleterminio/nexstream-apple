@@ -181,6 +181,14 @@ final class AppDB {
 
     /// Current and following programmes for one channel.
     func upcoming(_ epgId: String, now: Millis = Clock.now, limit: Int = 2) -> [ProgrammeEntity] { progs("WHERE epgId = ? AND stop > ? ORDER BY start LIMIT ?", [epgId, now, limit]) }
+    /// What is on at `t` and what comes after it, on one channel (the live player's "Dopo:"). `upcoming(limit: 2)` was
+    /// fooled by two rows on air at once (a feed's own overlaps, duplicated rows): both were "now" and "Dopo" vanished.
+    /// Now: the on-air row that started last, and the first row that starts after `t`.
+    func nowAndNext(_ epgId: String, at t: Millis = Clock.now) -> (now: ProgrammeEntity?, next: ProgrammeEntity?) {
+        let on = progs("WHERE epgId = ? AND start <= ? AND stop > ? ORDER BY start DESC LIMIT 1", [epgId, t, t]).first
+        let next = progs("WHERE epgId = ? AND start > ? ORDER BY start LIMIT 1", [epgId, t]).first
+        return (on, next)
+    }
     /// Programmes on air at an instant, for all channels.
     func programmesAt(_ at: Millis) -> [ProgrammeEntity] { progs("WHERE start <= ? AND stop > ?", [at, at]) }
     func programmesBetween(_ epgId: String, _ from: Millis, _ to: Millis) -> [ProgrammeEntity] { progs("WHERE epgId = ? AND stop > ? AND start < ? ORDER BY start", [epgId, from, to]) }
@@ -304,7 +312,12 @@ final class AppDB {
     }
     /// Latest position per title, for "Continua a guardare".
     func continueWatching(_ pid: Int64) -> [ProgressEntity] {
-        rows("SELECT \(AppDB.progressCols) FROM progress WHERE profileId = ? AND updatedAt IN (SELECT MAX(updatedAt) FROM progress WHERE profileId = ? GROUP BY tmdbId, media) ORDER BY updatedAt DESC LIMIT 30", [pid, pid], AppDB.progress)
+        // the latest row of each title, compared within that title (the old "updatedAt IN (every title's maximum)" also
+        // matched another episode or title sharing a timestamp, e.g. rows written by one sync: doubled cards); ties of
+        // one title (two episodes saved in the same instant) still make one card
+        var seen = Set<String>()
+        return rows("SELECT \(AppDB.progressCols) FROM progress AS p WHERE p.profileId = ? AND p.updatedAt = (SELECT MAX(q.updatedAt) FROM progress AS q WHERE q.profileId = p.profileId AND q.tmdbId = p.tmdbId AND q.media = p.media) ORDER BY p.updatedAt DESC LIMIT 30", [pid], AppDB.progress)
+            .filter { seen.insert("\($0.tmdbId)-\($0.media)").inserted }
     }
     func allProgress(_ pid: Int64) -> [ProgressEntity] { rows("SELECT \(AppDB.progressCols) FROM progress WHERE profileId = ? ORDER BY updatedAt DESC LIMIT 400", [pid], AppDB.progress) }
     func clearProgressTitle(_ pid: Int64, _ id: Int, _ media: String) { run("DELETE FROM progress WHERE profileId = ? AND tmdbId = ? AND media = ?", [pid, id, media], touch: "progress") }
