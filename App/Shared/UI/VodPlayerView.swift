@@ -12,6 +12,8 @@ struct VodPlayerView: View {
     @EnvironmentObject var app: AppModel
     @StateObject private var chrome = ChromeState()
     @State private var countdown = 5
+    /// When the end screen's countdown started ("Guarda ora" fills with red over the 5 s).
+    @State private var endStart: Date? = nil
     /// The 5 s countdown of "Prossimo episodio" during the credits (Netflix-like), on every platform.
     @StateObject private var nextCount = NextCountdown()
     /// Apple TV: the button of the resolving / failed / ended / still-watching screens that takes the focus.
@@ -59,6 +61,13 @@ struct VodPlayerView: View {
             if p == .playing && Demo.args.contains("-nxSourcePicker") && !Demo.playerPanelDone {
                 Demo.playerPanelDone = true
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { source() }
+            }
+            // `-nxPlayerPanel credits|ended` on iPhone / iPad too (the Apple TV handles it in TvVodLayer.demo)
+            if p == .playing, let what = Demo.value("-nxPlayerPanel"), what == "credits" || what == "ended", !Demo.playerPanelDone {
+                Demo.playerPanelDone = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                    if what == "ended" { model.phase = .ended } else { model.seekTarget = max(0, model.duration - 50_000); model.applySeek() }
+                }
             }
             #endif
         }
@@ -333,7 +342,8 @@ struct VodPlayerView: View {
                     Text("S\(n.season) E\(n.episode)" + (n.episodeTitle.map { " · \($0)" } ?? "")).font(full ? NxFont.titleL : NxFont.titleM).foregroundStyle(NxColor.text).multilineTextAlignment(.center).lineLimit(2)
                     if autoplay { Text("Parte tra \(countdown) secondi").font(NxFont.meta).foregroundStyle(NxColor.textMuted) }
                     HStack(spacing: Metrics.u(10)) {
-                        NxButton("Guarda ora", icon: "play.fill", kind: .primary) { var x = n; x.auto = false; app.core.watchSession.touch(); app.play(x) }
+                        CountdownButton(title: "Guarda ora", icon: "play.fill", startedAt: autoplay ? endStart : nil, primary: true) { var x = n; x.auto = false; app.core.watchSession.touch(); app.play(x) }
+                            .accessibilityIdentifier("player.ended.next")
                             .tvPhaseFocus($phaseFocus, 0)
                         NxButton("Chiudi", kind: .secondary) { app.closePlayer() }
                             .tvPhaseFocus($phaseFocus, 1)
@@ -357,6 +367,8 @@ struct VodPlayerView: View {
         .task {
             guard autoplay, let n = next else { return }
             countdown = 5
+            endStart = Date()
+            defer { endStart = nil }
             while countdown > 0 {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 if Task.isCancelled { return }
@@ -379,7 +391,7 @@ struct VodPlayerView: View {
             if autoplay {
                 ZStack {
                     Circle().stroke(Color.white.opacity(0.3), lineWidth: 6)
-                    Circle().trim(from: 0, to: CGFloat(countdown) / 5).stroke(Color.white, style: StrokeStyle(lineWidth: 6, lineCap: .round)).rotationEffect(.degrees(-90))
+                    Circle().trim(from: 0, to: CGFloat(countdown) / 5).stroke(NxColor.accent, style: StrokeStyle(lineWidth: 6, lineCap: .round)).rotationEffect(.degrees(-90))
                     Text("\(countdown)").font(NxFont.display(22, .bold)).foregroundStyle(.white).monospacedDigit()
                 }
                 .frame(width: 110, height: 110)
@@ -580,7 +592,8 @@ func startCreditsCountdown(_ c: NextCountdown, model: VodPlayerModel, app: AppMo
     }
 }
 
-/// "Prossimo episodio" of the credits: while the countdown runs, a lighter band fills the button from the left in 5 s.
+/// "Prossimo episodio" of the credits: while the countdown runs, a red band (brand red) fills the button from the left
+/// in 5 s; the label over the red part turns white, so it stays readable (Android: TvButton / CreditsPrompt).
 struct NextEpisodeButton: View {
     @ObservedObject var countdown: NextCountdown
     /// Phone: always the white button; TV: white under the focus.
@@ -588,40 +601,55 @@ struct NextEpisodeButton: View {
     let action: () -> Void
 
     var body: some View {
+        CountdownButton(title: "Prossimo episodio", icon: "forward.end.fill", startedAt: countdown.startedAt, primary: primary, action: action)
+            .accessibilityIdentifier("player.credits.next")
+            .accessibilityValue(countdown.running ? "countdown" : "")
+    }
+}
+
+/// A player button that can count down: from `startedAt`, red fills it from the left in `NextCountdown.seconds`.
+/// Used by "Prossimo episodio" (credits) and "Guarda ora" (end of the episode), on every Apple platform.
+struct CountdownButton: View {
+    let title: String
+    let icon: String
+    let startedAt: Date?
+    var primary: Bool = false
+    let action: () -> Void
+
+    var body: some View {
         Button(action: action) {
             Focusable { focused in
                 let white = Metrics.tv ? focused : primary
-                HStack(spacing: Metrics.u(7)) {
-                    Image(systemName: "forward.end.fill").font(.system(size: 15 * Metrics.type, weight: .bold))
-                    Text("Prossimo episodio").font(NxFont.button).lineLimit(1)
+                ZStack(alignment: .leading) {
+                    label(white ? Color.black : Color.white)
+                        .background(white ? Color.white : NxColor.button)
+                    if let start = startedAt {
+                        TimelineView(.animation) { t in
+                            let p = min(1, max(0, t.date.timeIntervalSince(start) / NextCountdown.seconds))
+                            label(.white)
+                                .background(NxColor.accent)
+                                .mask(alignment: .leading) {
+                                    GeometryReader { g in Rectangle().frame(width: g.size.width * CGFloat(p)) }
+                                }
+                        }
+                    }
                 }
-                .foregroundStyle(white ? Color.black : Color.white)
-                .fixedSize()
-                .padding(.horizontal, Metrics.u(18))
-                .frame(height: Metrics.u(Metrics.tv ? 36 : 42))
-                .background { fill(white) }
                 .clipShape(RoundedRectangle(cornerRadius: Metrics.u(4), style: .continuous))
                 .scaleEffect(focused ? 1.06 : 1)
                 .animation(.easeOut(duration: 0.15), value: focused)
             }
         }
         .buttonStyle(NxPlainStyle())
-        .accessibilityIdentifier("player.credits.next")
-        .accessibilityValue(countdown.running ? "countdown" : "")
     }
 
-    @ViewBuilder private func fill(_ white: Bool) -> some View {
-        ZStack(alignment: .leading) {
-            (white ? Color.white : NxColor.button)
-            if let start = countdown.startedAt {
-                TimelineView(.animation) { t in
-                    let p = min(1, max(0, t.date.timeIntervalSince(start) / NextCountdown.seconds))
-                    GeometryReader { g in
-                        (white ? Color.black.opacity(0.22) : Color.white.opacity(0.32))
-                            .frame(width: g.size.width * CGFloat(p))
-                    }
-                }
-            }
+    private func label(_ fg: Color) -> some View {
+        HStack(spacing: Metrics.u(7)) {
+            Image(systemName: icon).font(.system(size: 15 * Metrics.type, weight: .bold))
+            Text(title).font(NxFont.button).lineLimit(1)
         }
+        .foregroundStyle(fg)
+        .fixedSize()
+        .padding(.horizontal, Metrics.u(18))
+        .frame(height: Metrics.u(Metrics.tv ? 36 : 42))
     }
 }
