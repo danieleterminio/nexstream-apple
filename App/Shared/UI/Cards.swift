@@ -363,6 +363,8 @@ struct LandscapeTitleCard: View {
                 .frame(width: w, height: w * 9 / 16)
                 .clipShape(RoundedRectangle(cornerRadius: Metrics.radius, style: .continuous))
             }
+            // UI tests: a card that plays at once ("Continua a guardare") is told apart from one that opens a page
+            .accessibilityIdentifier(play ? "card.play" : "card.title")
             VStack(alignment: .leading, spacing: Metrics.u(1)) {
                 Text(title.displayTitle).font(NxFont.ui(13, .bold)).foregroundStyle(NxColor.text).lineLimit(1)
                 if let c = overlay?.label ?? caption { Text(c).font(NxFont.ui(11, .medium)).foregroundStyle(NxColor.textDim).lineLimit(1) }

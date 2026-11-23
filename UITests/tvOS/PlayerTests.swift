@@ -212,11 +212,14 @@ final class VodPlayerTests: NxUITestCase {
     /// Every option of the row is reachable with LEFT / RIGHT, and "Episodi" opens and closes back on itself.
     func testOptionRowReachesEveryPanel() {
         openVod()
+        // the "Cambia fonte" list is fetched 8 s after the video starts: walk the row after it, not during it
+        pause(8)
         press(.down, wait: 1.2)
         XCTAssertTrue(focusedId.hasPrefix("player.option."), "DOWN should focus the option row, \(focusInfo)")
         for _ in 0..<6 { press(.left, wait: 0.5) }
         var seen = [String]()
         for _ in 0..<7 {
+            _ = wait(2) { self.focusedId.hasPrefix("player.option.") }
             let id = focusedId
             if !id.hasPrefix("player.option.") || seen.contains(id) { break }
             seen.append(id)
