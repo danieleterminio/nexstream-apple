@@ -1,6 +1,7 @@
 #if os(tvOS)
 import SwiftUI
 import UIKit
+import UIKit.UIGestureRecognizerSubclass
 import Combine
 
 // The Apple TV player, drawn like Netflix on the Apple TV: nothing on the picture while it plays, any key brings the
@@ -55,6 +56,8 @@ struct TvVodLayer: View {
     @ObservedObject var model: VodPlayerModel
     @ObservedObject var player: NxPlayer
     @ObservedObject var chrome: ChromeState
+    /// The 5 s countdown of "Prossimo episodio" during the credits (owned by VodPlayerView).
+    let countdown: NextCountdown
     @EnvironmentObject var app: AppModel
     @State private var panel: TvPanel? = nil
     @State private var ramp = TvSeekRamp()
@@ -64,12 +67,20 @@ struct TvVodLayer: View {
     @State private var keys = PassthroughSubject<String, Never>()
     @State private var scrubBase: Millis = 0
     @State private var scrubApply: Task<Void, Never>? = nil
+    /// A swipe moved the bar's knob: the target waits for a click (BACK drops it).
+    @State private var scrubPending = false
+    /// A held click on the left / right edge keeps seeking, faster and faster.
+    @State private var holdTask: Task<Void, Never>? = nil
+    @State private var input = TvInputTimes()
+    /// The focus goes back to the bar because the controls left: that is not input, the controls stay hidden.
+    @State private var quietFocus = false
     @FocusState private var focus: TvVodFocus?
 
-    init(model: VodPlayerModel, player: NxPlayer, chrome: ChromeState) {
+    init(model: VodPlayerModel, player: NxPlayer, chrome: ChromeState, countdown: NextCountdown) {
         self.model = model
         self.player = player
         self.chrome = chrome
+        self.countdown = countdown
     }
 
     private struct Option: Identifiable {
@@ -107,15 +118,31 @@ struct TvVodLayer: View {
         .animation(.easeOut(duration: 0.2), value: showControls)
         .onPlayPauseCommand { if panel == nil { togglePlay() } }
         .onReceive(NotificationCenter.default.publisher(for: .nxRemoteKey)) { n in remoteKey(n.object as? String ?? "") }
+        .background(TvRemotePresses(consumeArrows: panel == nil && focus == .surface && model.duration > 0,
+                                    onArrow: arrowDown, onArrowUp: arrowUp, onAny: { countdown.cancel() }))
         .onAppear { focus = .surface }
+        .onDisappear { holdTask?.cancel(); scrubApply?.cancel() }
         .onChange(of: focus) { _, f in
-            if f == .surface { chrome.show() }
-            if case .option(let id) = f { lastOption = id }
+            if f == .surface { if quietFocus { quietFocus = false } else { chrome.show() } }
+            if case .option(let id) = f { lastOption = id; chrome.show() }
+            if f != .credits(1) && f != nil { countdown.cancel() }
             if f == nil && panel == nil { DispatchQueue.main.async { if focus == nil && panel == nil { focus = .surface } } }
         }
-        .onChange(of: creditsShown) { _, shown in
-            if shown { focus = .credits(1) } else if case .credits = focus { focus = .surface }
+        // the controls left by themselves while the option row had the focus: the focus goes back to the bar, so the
+        // next key acts on the video and nothing is focused out of sight
+        .onChange(of: chrome.visible) { _, v in
+            if !v && optionFocused && panel == nil && !model.paused { quietFocus = true; focus = .surface }
         }
+        .onChange(of: creditsShown) { _, shown in
+            if shown {
+                focus = .credits(1)
+                startCreditsCountdown(countdown, model: model, app: app)
+            } else {
+                countdown.reset()
+                if case .credits = focus { focus = .surface }
+            }
+        }
+        .onChange(of: panel) { _, p in if p != nil { countdown.cancel() } }
         .task { await demo() }
     }
 
@@ -133,7 +160,8 @@ struct TvVodLayer: View {
         .disabled(panel != nil)
         .onMoveCommand { dir in move(dir) }
         .onExitCommand { back() }
-        .background(TvTouchPan(enabled: panel == nil && focus == .surface && model.duration > 0, onBegin: panBegin, onChange: panChange, onEnd: panEnd))
+        .background(TvTouchPan(enabled: panel == nil && focus == .surface && model.duration > 0, onBegin: panBegin, onChange: panChange, onEnd: panEnd,
+                               onTouch: { input.touchAt = Date(); countdown.cancel() }))
     }
 
     // MARK: touch surface
@@ -143,7 +171,10 @@ struct TvVodLayer: View {
 
     private func panBegin() {
         scrubApply?.cancel()
+        holdTask?.cancel()
+        // a second swipe carries on from where the first one left the knob (position = the pending target)
         scrubBase = model.position
+        scrubPending = true
         chrome.show(auto: false)
     }
 
@@ -152,17 +183,23 @@ struct TvVodLayer: View {
         model.scrub(to: max(0, min(model.duration, scrubBase + d)))
     }
 
+    /// Like the Apple TV app: the knob stays where the swipe left it, a click goes there; BACK (or 8 s without input)
+    /// drops it and the video carries on from where it is.
     private func panEnd(_ x: CGFloat) {
         panChange(x)
-        chrome.show()
+        chrome.show(auto: false)
         scrubApply = Task {
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            if Task.isCancelled { return }
-            model.applySeek()
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            if Task.isCancelled || !scrubPending { return }
+            scrubPending = false
+            model.seekTarget = nil
+            chrome.show()
         }
     }
 
     private func select() {
+        scrubApply?.cancel()
+        scrubPending = false
         if model.seekTarget != nil { model.applySeek(); chrome.show() } else { togglePlay() }
     }
 
@@ -173,13 +210,48 @@ struct TvVodLayer: View {
     }
 
     private func move(_ dir: MoveCommandDirection) {
+        countdown.cancel()
         switch dir {
-        case .left: seek(-1)
-        case .right: seek(1)
+        case .left: moveSeek(-1)
+        case .right: moveSeek(1)
         case .down: focusOptions()
         case .up: chrome.show()
         default: break
         }
+    }
+
+    /// A left / right move that did not come as a click (clicks are taken by `TvRemotePresses`): a swipe on the touch
+    /// surface also produces one, and the swipe scrubs already, so it only seeks when no finger was on the surface.
+    private func moveSeek(_ d: Int) {
+        let now = Date()
+        if now.timeIntervalSince(input.arrowAt) < 0.35 || now.timeIntervalSince(input.touchAt) < 0.5 || scrubPending { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            let t = Date()
+            if t.timeIntervalSince(input.touchAt) < 0.6 || t.timeIntervalSince(input.arrowAt) < 0.45 || scrubPending { return }
+            seek(d)
+        }
+    }
+
+    /// A click on the left / right edge: one step at once; held, a step every 0.22 s that grows (10 s up to 2 min).
+    private func arrowDown(_ d: Int) {
+        input.arrowAt = Date()
+        countdown.cancel()
+        holdTask?.cancel()
+        seek(d)
+        holdTask = Task {
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            while !Task.isCancelled {
+                input.arrowAt = Date()
+                seek(d)
+                try? await Task.sleep(nanoseconds: 220_000_000)
+            }
+        }
+    }
+
+    private func arrowUp() {
+        input.arrowAt = Date()
+        holdTask?.cancel()
+        holdTask = nil
     }
 
     /// DOWN (or the phone's menu key): the controls come up with the focus on the option row.
@@ -193,13 +265,16 @@ struct TvVodLayer: View {
 
     private func seek(_ d: Int) {
         guard model.duration > 0 else { return }
+        scrubApply?.cancel()
+        scrubPending = false
         model.seekBy(ramp.step(d))
         chrome.show()
     }
 
     /// BACK: cancel a seek, then hide the controls, then leave the player.
     private func back() {
-        if model.seekTarget != nil { model.seekTarget = nil; chrome.show(); return }
+        holdTask?.cancel()
+        if model.seekTarget != nil { scrubApply?.cancel(); scrubPending = false; model.seekTarget = nil; chrome.show(); return }
         if chrome.visible && !model.paused { chrome.hide(); return }
         app.closePlayer()
     }
@@ -227,7 +302,8 @@ struct TvVodLayer: View {
             titleBlock.padding(.horizontal, 80).padding(.top, 60)
             Spacer(minLength: 0)
             VStack(alignment: .leading, spacing: 34) {
-                TvSeekBar(position: model.position, actual: player.positionMs, duration: model.duration, seeking: model.seekTarget != nil, paused: model.paused)
+                TvSeekBar(position: model.position, actual: player.positionMs, duration: model.duration, seeking: model.seekTarget != nil, paused: model.paused,
+                          hint: scrubPending ? "Clicca per andare qui" : nil)
                 optionRow
             }
             .padding(.horizontal, 80).padding(.bottom, 56)
@@ -303,13 +379,18 @@ struct TvVodLayer: View {
             Spacer()
             HStack(spacing: 24) {
                 Spacer()
-                NxButton("Titoli di coda", kind: .secondary) { model.creditsDismissed = true; focus = .surface }
+                NxButton("Guarda i titoli di coda", kind: .secondary) { dismissCredits() }
                     .focused($focus, equals: .credits(0))
-                NxButton("Prossimo episodio", icon: "forward.end.fill", kind: .primary) { if let n = model.nextRequest(auto: false) { app.play(n) } }
+                    .accessibilityIdentifier("player.credits.watch")
+                NextEpisodeButton(countdown: countdown) { countdown.reset(); if let n = model.nextRequest(auto: false) { app.play(n) } }
                     .focused($focus, equals: .credits(1))
             }
             .focusSection()
-            .onExitCommand { model.creditsDismissed = true; focus = .surface }
+            .onExitCommand { dismissCredits() }
+            .onMoveCommand { dir in
+                countdown.cancel()
+                if dir == .up || dir == .down { focus = .surface; chrome.show() }
+            }
         }
         .padding(.horizontal, 80).padding(.bottom, showControls ? 300 : 90)
         .background(alignment: .bottom) {
@@ -318,6 +399,13 @@ struct TvVodLayer: View {
                 .frame(height: 360).allowsHitTesting(false).opacity(showControls ? 0 : 1)
         }
         .ignoresSafeArea()
+    }
+
+    /// "Guarda i titoli di coda": the buttons leave, the episode plays to the end (the end screen still counts down).
+    private func dismissCredits() {
+        countdown.reset()
+        model.creditsDismissed = true
+        focus = .surface
     }
 
     // MARK: panels
@@ -371,6 +459,7 @@ struct TvVodLayer: View {
 
     private func remoteKey(_ k: String) {
         guard model.phase == .playing else { return }
+        if !(k == "ok" && focus == .credits(1)) { countdown.cancel() }
         if panel != nil {
             if k == "back" { closePanel() } else { keys.send(k) }
             return
@@ -380,8 +469,8 @@ struct TvVodLayer: View {
             case "left": focus = .credits(0)
             case "right": focus = .credits(1)
             case "ok":
-                if i == 1, let n = model.nextRequest(auto: false) { app.play(n) } else { model.creditsDismissed = true; focus = .surface }
-            case "back": model.creditsDismissed = true; focus = .surface
+                if i == 1, let n = model.nextRequest(auto: false) { countdown.reset(); app.play(n) } else { dismissCredits() }
+            case "back": dismissCredits()
             case "playpause": togglePlay()
             default: break
             }
@@ -414,7 +503,7 @@ struct TvVodLayer: View {
 
     // MARK: build pipeline
 
-    /// Launch argument `-nxPlayerPanel paused|seek|options|tracks|episodes|speed|source|credits|ended|still|failed|hidden`: once the video plays, put the
+    /// Launch argument `-nxPlayerPanel paused|seek|scrub|options|tracks|episodes|speed|source|credits|ended|still|failed|hidden`: once the video plays, put the
     /// player in that state so the build pipeline can take its picture.
     private func demo() async {
         guard let what = Demo.value("-nxPlayerPanel"), !Demo.playerPanelDone else { return }
@@ -432,6 +521,11 @@ struct TvVodLayer: View {
             for _ in 0..<5 { seek(1); try? await Task.sleep(nanoseconds: 150_000_000) }
             if let t = model.seekTarget { model.scrub(to: t) }
             chrome.show(auto: false)
+        case "scrub":
+            // a swipe to the right as the touch surface would report it: the knob waits for the click
+            panBegin()
+            panChange(TvTouchPan.fullSwipe * 0.4)
+            panEnd(TvTouchPan.fullSwipe * 0.4)
         case "options":
             chrome.show(auto: false)
             try? await Task.sleep(nanoseconds: 300_000_000)
@@ -471,6 +565,8 @@ struct TvSeekBar: View {
     let duration: Millis
     let seeking: Bool
     let paused: Bool
+    /// Under the target time while a swipe waits for its click.
+    var hint: String? = nil
 
     private func frac(_ v: Millis) -> CGFloat {
         duration > 0 ? CGFloat(max(0, min(1, Double(v) / Double(duration)))) : 0
@@ -508,13 +604,14 @@ struct TvSeekBar: View {
                     VStack(spacing: 2) {
                         Text(playerClock(position)).font(NxFont.ui(16, .heavy)).foregroundStyle(.white).monospacedDigit()
                         Text(delta).font(NxFont.ui(11, .bold)).foregroundStyle(NxColor.textMuted).monospacedDigit()
+                        if let h = hint { Text(h).font(NxFont.ui(10, .semibold)).foregroundStyle(NxColor.textDim).padding(.top, 2) }
                     }
                     .padding(.horizontal, 20).padding(.vertical, 10)
                     .background(Color.black.opacity(0.85), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.white.opacity(0.25), lineWidth: 1))
                     .fixedSize()
-                    .frame(width: 200)
-                    .offset(x: max(0, min(w - 200, w * f - 100)), y: -78)
+                    .frame(width: 300)
+                    .offset(x: max(0, min(w - 300, w * f - 150)), y: hint == nil ? -78 : -100)
                 }
             }
             .frame(height: 30)
@@ -952,6 +1049,118 @@ struct TvEpisodeCard: View {
     }
 }
 
+// MARK: - remote clicks
+
+/// When the last click on an edge and the last finger movement on the touch surface happened (a reference, so updating
+/// it does not redraw the player).
+final class TvInputTimes {
+    var arrowAt = Date.distantPast
+    var touchAt = Date.distantPast
+}
+
+/// The Siri Remote's clicks. Left / right on the clickpad edge (and the arrow keys of other remotes) arrive as press down
+/// and press up, so a held click can keep seeking; while `consumeArrows` is on the press is cancelled for the focused view
+/// (the move command it may already have sent is ignored by the player). Every other press is only reported (`onAny`) and goes on as usual. Swipes on the touch
+/// surface are not presses: `TvTouchPan` gets those.
+struct TvRemotePresses: UIViewRepresentable {
+    let consumeArrows: Bool
+    let onArrow: (Int) -> Void
+    let onArrowUp: () -> Void
+    let onAny: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> HostView {
+        let v = HostView()
+        v.isUserInteractionEnabled = false
+        v.coordinator = context.coordinator
+        context.coordinator.parent = self
+        return v
+    }
+
+    func updateUIView(_ v: HostView, context: Context) { context.coordinator.parent = self }
+
+    static func dismantleUIView(_ v: HostView, coordinator: Coordinator) {
+        coordinator.detach()
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var parent: TvRemotePresses?
+        lazy var arrows: TvArrowPressRecognizer = {
+            let r = TvArrowPressRecognizer(target: nil, action: nil)
+            r.owner = self
+            r.allowedPressTypes = [UIPress.PressType.leftArrow, .rightArrow].map { NSNumber(value: $0.rawValue) }
+            r.allowedTouchTypes = []
+            r.cancelsTouchesInView = false
+            r.delegate = self
+            return r
+        }()
+        lazy var watcher: TvAnyPressRecognizer = {
+            let r = TvAnyPressRecognizer(target: nil, action: nil)
+            r.owner = self
+            r.allowedTouchTypes = []
+            r.cancelsTouchesInView = false
+            r.delegate = self
+            return r
+        }()
+
+        func attach(to w: UIWindow) {
+            detach()
+            w.addGestureRecognizer(arrows)
+            w.addGestureRecognizer(watcher)
+        }
+        func detach() {
+            arrows.view?.removeGestureRecognizer(arrows)
+            watcher.view?.removeGestureRecognizer(watcher)
+        }
+
+        func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+    }
+
+    final class HostView: UIView {
+        weak var coordinator: Coordinator?
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            guard let c = coordinator else { return }
+            if let w = window { c.attach(to: w) } else { c.detach() }
+        }
+    }
+}
+
+/// Left / right clicks: recognised at once (so the press never reaches the focused view) while the player wants them,
+/// failed at once otherwise (so the press goes on to the focus engine without delay).
+final class TvArrowPressRecognizer: UIGestureRecognizer {
+    weak var owner: TvRemotePresses.Coordinator?
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent) {
+        guard state == .possible,
+              let p = presses.first(where: { $0.type == .leftArrow || $0.type == .rightArrow }),
+              let o = owner?.parent, o.consumeArrows else { state = .failed; return }
+        state = .began
+        o.onArrow(p.type == .leftArrow ? -1 : 1)
+    }
+
+    override func pressesChanged(_ presses: Set<UIPress>, with event: UIPressesEvent) {}
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent) {
+        if state == .began || state == .changed { state = .ended; owner?.parent?.onArrowUp() } else { state = .failed }
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent) {
+        if state == .began || state == .changed { state = .cancelled; owner?.parent?.onArrowUp() } else { state = .failed }
+    }
+}
+
+/// Every press, only reported: it fails at once and the press goes on untouched.
+final class TvAnyPressRecognizer: UIGestureRecognizer {
+    weak var owner: TvRemotePresses.Coordinator?
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent) {
+        owner?.parent?.onAny()
+        state = .failed
+    }
+}
+
 // MARK: - touch surface
 
 /// The Siri Remote's touch surface: a horizontal swipe, reported as the distance travelled (points). The recogniser sits
@@ -964,6 +1173,8 @@ struct TvTouchPan: UIViewRepresentable {
     let onBegin: () -> Void
     let onChange: (CGFloat) -> Void
     let onEnd: (CGFloat) -> Void
+    /// Any finger movement on the surface, even one too small to scrub (stops the credits countdown).
+    var onTouch: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -997,6 +1208,7 @@ struct TvTouchPan: UIViewRepresentable {
         @objc func handle(_ g: UIPanGestureRecognizer) {
             guard let p = parent, let v = g.view else { return }
             let t = g.translation(in: v)
+            if g.state == .began || g.state == .changed { p.onTouch?() }
             switch g.state {
             case .began:
                 started = false
