@@ -295,7 +295,7 @@ final class VodPlayerModel: ObservableObject {
         if seekTarget != nil && t - lastSeekInput > 700 { applySeek() }
         if let nr = nextReq, prefetched == nil, !prefetching, duration > 0, duration - player.positionMs < 240_000 {
             prefetching = true
-            Task { self.prefetched = await self.core.resolver.resolve(nr); NxLog.i("NxPlayer", "prefetched next: \(self.prefetched?.channel ?? "-")") }
+            Task { self.prefetched = await self.core.resolver.prefetch(nr); NxLog.i("NxPlayer", "prefetched next: \(self.prefetched?.channel ?? "-")") }
         }
     }
 }

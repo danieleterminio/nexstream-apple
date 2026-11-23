@@ -371,13 +371,20 @@ def resolve(server_item_json):
     return json.dumps({'urls': out, 'error': None}, ensure_ascii=False)
 
 
-def play(item_json, max_servers=4):
-    """One-shot: servers() + resolve() until a playable URL is found. Returns JSON {url, headers, kind, server, tried}."""
+def play(item_json, max_servers=4, defer_single_proxy=0):
+    """One-shot: servers() + resolve() until a playable URL is found. Returns JSON {url, headers, kind, server, tried}.
+
+    defer_single_proxy (next-episode prefetch while another video plays): a server that plays through the add-on's one
+    local proxy (SINGLE_PROXY_SERVERS) is not resolved, because resolving it restarts the proxy and stops the stream
+    that is playing. When such a server is reached the answer is {url: None, deferred: True, server}: the item is
+    right, the link is resolved at switch time."""
     _ensure()
     tried = []
     for s in json.loads(servers(item_json))[:max_servers]:
         if s['premium']:
             continue
+        if defer_single_proxy and s['server'] in SINGLE_PROXY_SERVERS:
+            return json.dumps({'url': None, 'deferred': True, 'server': s['server'], 'tried': tried, 'source': s['id'], 'channel': s['channel']})
         r = json.loads(resolve(s['item']))
         tried.append({'server': s['server'], 'ok': bool(r['urls']), 'error': r.get('error')})
         if r['urls']:

@@ -30,8 +30,13 @@ final class PlaybackResolver {
     private let db: AppDB
     init(engine: Engine, db: AppDB) { self.engine = engine; self.db = db }
 
+    /// The next episode, resolved while the current one plays (credits / last minutes). Same as `resolve` but a source that
+    /// plays through the add-on's one local proxy (vidxgo) is not resolved: that would restart the proxy and stop the video
+    /// on screen. Then only the search part is done (the hit is cached) and nil is returned: the switch resolves it.
+    func prefetch(_ req: PlayRequest) async -> ResolvedStream? { await resolve(req, prefetch: true) }
+
     /// `exclude` = sources (Stream4Me channels) that already failed for this playback: they are skipped.
-    func resolve(_ req: PlayRequest, exclude: Set<String> = [], onStatus statusRaw: @escaping (String) -> Void = { _ in }) async -> ResolvedStream? {
+    func resolve(_ req: PlayRequest, exclude: Set<String> = [], prefetch: Bool = false, onStatus statusRaw: @escaping (String) -> Void = { _ in }) async -> ResolvedStream? {
         let onStatus: (String) -> Void = { NxLog.i("NxResolver", $0); statusRaw($0) }
         let d = req.details
         NxLog.i("NxResolver", "resolve \(d.media)/\(d.id) \(d.displayTitle) S\(req.season)E\(req.episode)")
@@ -39,9 +44,12 @@ final class PlaybackResolver {
 
         // 1) cached match for this TMDB title
         var ignored = Set<String>()
+        var deferred = false
         if let cached = db.sourceCache(d.id, d.media), !exclude.contains(cached.channel) {
             onStatus("Avvio il video…")
-            if let r = await tryHit(SearchHit(channel: cached.channel, title: cached.title, type: type, item: cached.item), req, &ignored) {
+            let r = await tryHit(SearchHit(channel: cached.channel, title: cached.title, type: type, item: cached.item), req, &ignored, prefetch: prefetch, deferred: &deferred)
+            if deferred { NxLog.i("NxResolver", "prefetch: \(cached.channel) plays through the add-on proxy, resolved at switch time"); return nil }
+            if let r {
                 db.upsertVodIndex(VodIndexEntity(tmdbId: d.id, media: d.media, available: true))
                 return r
             }
@@ -67,7 +75,13 @@ final class PlaybackResolver {
             let hits = resp.hits.filter { $0.scoreValue >= 0.6 && !exclude.contains($0.channel) && (seenItems.insert($0.item).inserted || (wait > 20 && retryable.remove($0.item) != nil)) }.prefix(take)
             for hit in hits {
                 onStatus("Trovato, lo preparo…")
-                if let r = await tryHit(hit, req, &retryable) {
+                let r = await tryHit(hit, req, &retryable, prefetch: prefetch, deferred: &deferred)
+                if deferred {
+                    db.upsertSourceCache(SourceCacheEntity(tmdbId: d.id, media: d.media, channel: hit.channel, item: hit.item, title: hit.title))
+                    NxLog.i("NxResolver", "prefetch: \(hit.channel) plays through the add-on proxy, resolved at switch time")
+                    return nil
+                }
+                if let r {
                     db.upsertSourceCache(SourceCacheEntity(tmdbId: d.id, media: d.media, channel: hit.channel, item: hit.item, title: hit.title))
                     db.upsertVodIndex(VodIndexEntity(tmdbId: d.id, media: d.media, available: true))
                     return r
@@ -79,7 +93,7 @@ final class PlaybackResolver {
         return nil
     }
 
-    private func tryHit(_ hit: SearchHit, _ req: PlayRequest, _ retryable: inout Set<String>) async -> ResolvedStream? {
+    private func tryHit(_ hit: SearchHit, _ req: PlayRequest, _ retryable: inout Set<String>, prefetch: Bool = false, deferred: inout Bool) async -> ResolvedStream? {
         var item = hit.item
         if req.details.isTv {
             let eps: [EpisodeHit]
@@ -91,7 +105,8 @@ final class PlaybackResolver {
             item = ep.item
         }
         let r: PlayResponse
-        do { r = try await engine.play(item) } catch { NxLog.w("NxResolver", "\(hit.channel): play failed: \(error)"); retryable.insert(hit.item); return nil }
+        do { r = try await engine.play(item, deferSingleProxy: prefetch) } catch { NxLog.w("NxResolver", "\(hit.channel): play failed: \(error)"); retryable.insert(hit.item); return nil }
+        if r.deferred == true { deferred = true; return nil }
         guard let url = r.url else { NxLog.w("NxResolver", "\(hit.channel): no playable link"); retryable.insert(hit.item); return nil }
         NxLog.i("NxResolver", "play on \(hit.channel): server=\(r.server ?? "?") kind=\(r.kind ?? "?")")
         return ResolvedStream(url: url, headers: r.headers ?? [:], kind: r.kind ?? "progressive", server: r.server ?? "", channel: hit.channel, alternates: r.all ?? [], sourceId: r.source ?? "")

@@ -52,6 +52,8 @@ struct PlayResponse: Codable {
     struct Hit: Codable { var channel: String?; var item: String?; var title: String? }
     var hit: Hit?
     var error: String?
+    /// play(defer_single_proxy): the first server shares the add-on's one proxy with the stream playing, resolve at switch time.
+    var deferred: Bool?
 }
 
 /// "Cambia fonte": one source of a film / episode (site + server), checked in the background (nxbridge.sources_*).
@@ -191,7 +193,10 @@ final class Engine {
 
     func episodes(_ item: String) async throws -> [EpisodeHit] { try decode([EpisodeHit].self, try await call("episodes", [item])) }
 
-    func play(_ item: String) async throws -> PlayResponse { try decode(PlayResponse.self, try await call("play", [item])) }
+    /// `deferSingleProxy` = next-episode prefetch: a server behind the add-on's one local proxy is not resolved (see nxbridge.play).
+    func play(_ item: String, deferSingleProxy: Bool = false) async throws -> PlayResponse {
+        try decode(PlayResponse.self, try await call("play", deferSingleProxy ? [item, 4, 1] : [item]))
+    }
 
     /// Starts (or reuses, for 20 minutes) the listing of every source of a title; `requestJson` as in nxbridge.sources_start.
     func sourcesStart(_ requestJson: String) async throws -> SourcesSnapshot { try decode(SourcesSnapshot.self, try await call("sources_start", [requestJson])) }
