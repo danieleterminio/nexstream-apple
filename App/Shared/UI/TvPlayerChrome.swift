@@ -1059,8 +1059,8 @@ final class TvInputTimes {
 }
 
 /// The Siri Remote's clicks. Left / right on the clickpad edge (and the arrow keys of other remotes) arrive as press down
-/// and press up, so a held click can keep seeking; while `consumeArrows` is on they never reach the focus engine (no
-/// double step, no focus jump). Every other press is only reported (`onAny`) and goes on as usual. Swipes on the touch
+/// and press up, so a held click can keep seeking; while `consumeArrows` is on the press is cancelled for the focused view
+/// (the move command it may already have sent is ignored by the player). Every other press is only reported (`onAny`) and goes on as usual. Swipes on the touch
 /// surface are not presses: `TvTouchPan` gets those.
 struct TvRemotePresses: UIViewRepresentable {
     let consumeArrows: Bool
@@ -1091,7 +1091,6 @@ struct TvRemotePresses: UIViewRepresentable {
             r.owner = self
             r.allowedPressTypes = [UIPress.PressType.leftArrow, .rightArrow].map { NSNumber(value: $0.rawValue) }
             r.allowedTouchTypes = []
-            r.delaysPressesBegan = true
             r.cancelsTouchesInView = false
             r.delegate = self
             return r
@@ -1101,7 +1100,6 @@ struct TvRemotePresses: UIViewRepresentable {
             r.owner = self
             r.allowedTouchTypes = []
             r.cancelsTouchesInView = false
-            r.delaysPressesBegan = false
             r.delegate = self
             return r
         }()
