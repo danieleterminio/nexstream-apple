@@ -367,6 +367,7 @@ final class AppModel: ObservableObject {
     /// Apple TV, BACK while nothing has the focus (`BackGuard`): the same step BACK would take from the focused element,
     /// never out of the app.
     func backWithoutFocus() {
+        if NxIntro.running { return }   // the opening is not skippable and BACK must not leave the app during it
         NxLog.i("NxFocus", "BACK with nothing focused")
         if !sheets.isEmpty { dismissSheet(); return }
         if playing != nil { closePlayer(); return }
