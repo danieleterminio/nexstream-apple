@@ -117,12 +117,19 @@ extension NxImage where Placeholder == Color {
 struct ChannelLogo: View {
     let channel: ChannelEntity
     var height: CGFloat = 22
+    /// Centred in its box (guide column, player tiles) instead of starting at the left (over artwork). The box then
+    /// takes only the logo's own width, so a tile around it can centre it (Android: ChannelLogo in a centred Box).
+    var centered: Bool = false
+    /// Widest the logo may get, in the same units as `height` (Android `maxWidth`); nil = 3.2 × the height.
+    var maxWidth: CGFloat? = nil
     var body: some View {
         let h = Metrics.u(height)
+        let w = maxWidth.map { Metrics.u($0) } ?? h * 3.2
+        let a: Alignment = centered ? .center : .leading
         // a logo that does not load (or is still loading) falls back to the next one, then to the name: never an empty tile
         if let logo = channel.logo {
-            NxImage(url: logo, fit: true, maxPixel: 320, alignment: .leading) { iconOrName(h) }
-                .frame(maxWidth: h * 3.2, maxHeight: h, alignment: .leading)
+            NxImage(url: logo, fit: true, maxPixel: 320, alignment: a) { iconOrName(h) }
+                .frame(maxWidth: w, maxHeight: h, alignment: a)
         } else {
             iconOrName(h)
         }
@@ -130,8 +137,8 @@ struct ChannelLogo: View {
 
     @ViewBuilder private func iconOrName(_ h: CGFloat) -> some View {
         if let icon = channel.icon, icon != channel.logo {
-            NxImage(url: icon, fit: true, maxPixel: 320, alignment: .leading) { name }
-                .frame(maxWidth: h * 3, maxHeight: h - Metrics.u(4), alignment: .leading)
+            NxImage(url: icon, fit: true, maxPixel: 320, alignment: centered ? .center : .leading) { name }
+                .frame(maxWidth: maxWidth.map { Metrics.u($0) } ?? h * 3, maxHeight: h - Metrics.u(4), alignment: centered ? .center : .leading)
                 .padding(.horizontal, Metrics.u(6)).padding(.vertical, Metrics.u(3))
                 .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: Metrics.u(6), style: .continuous))
         } else {
