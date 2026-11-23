@@ -27,6 +27,9 @@ final class VodPlayerModel: ObservableObject {
     @Published var paused = false
     /// Asked by the system controls: play the next episode (the app model does it).
     var onNext: ((PlayRequest) -> Void)?
+    /// "Cambia fonte": every source of this title, listed in the background once it plays.
+    let sources: SourcePickerModel
+    private var sourcesPrefetched = false
 
     private var prefetched: ResolvedStream? = nil
     private var prefetching = false
@@ -47,6 +50,7 @@ final class VodPlayerModel: ObservableObject {
     init(request: PlayRequest, pid: Int64) {
         self.request = request
         self.pid = pid
+        sources = SourcePickerModel(request: request)
         speed = core.settings.speed(pid)
         player.onEnded = { [weak self] in Task { @MainActor in await self?.ended() } }
         player.onError = { [weak self] in Task { @MainActor in await self?.errored() } }
@@ -112,6 +116,30 @@ final class VodPlayerModel: ObservableObject {
         player.load(url: s.url, headers: s.headers, startMs: at, live: false)
         phase = .playing
         paused = false
+        if !sourcesPrefetched && !["offline", "test"].contains(s.channel) {
+            sourcesPrefetched = true
+            let picker = sources
+            Task { try? await Task.sleep(nanoseconds: 8_000_000_000); await picker.prefetch() }
+        }
+    }
+
+    /// "Cambia fonte": the source picked plays from where the viewer is; if it gives no link, the old one carries on.
+    func pickSource(_ row: SourceRow, job: String?) {
+        guard let cur = stream, cur.channel != "offline", let job = job, !closed else { return }
+        let at = max(lastPos, player.positionMs)
+        Task {
+            player.stop()
+            phase = .resolving("Passo a \(row.siteName)…")
+            let next = await core.resolver.playSource(request, job: job, row: row)
+            if closed { return }
+            guard let n = next else {
+                AppModel.shared.say("\(row.siteName) non risponde: resto sulla fonte di prima")
+                open(cur, at: at)
+                return
+            }
+            triedSources.remove(n.channel)
+            open(n, at: at)
+        }
     }
 
     func close() {

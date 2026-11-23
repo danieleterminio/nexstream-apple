@@ -261,7 +261,7 @@ struct TvVodLayer: View {
         if model.details.isTv && model.canBrowse { a.append(Option(id: "episodes", icon: "rectangle.stack", title: "Episodi") { open(.episodes, "episodes") }) }
         a.append(Option(id: "tracks", icon: "captions.bubble", title: "Audio e sottotitoli") { open(.tracks, "tracks") })
         a.append(Option(id: "speed", icon: "speedometer", title: model.speed == 1 ? "Velocità" : "Velocità " + Settings.speedLabel(model.speed)) { open(.speed, "speed") })
-        if let s = model.stream, s.channel != "offline" { a.append(Option(id: "source", icon: "arrow.triangle.2.circlepath", title: "Fonte") { open(.source, "source") }) }
+        if let s = model.stream, s.channel != "offline" { a.append(Option(id: "source", icon: "arrow.triangle.2.circlepath", title: "Cambia fonte") { open(.source, "source") }) }
         if let n = model.nextRequest(auto: false) { a.append(Option(id: "next", icon: "forward.end.fill", title: "Prossimo episodio") { app.play(n) }) }
         return a
     }
@@ -332,7 +332,7 @@ struct TvVodLayer: View {
         case .speed:
             TvListOverlay(title: "Velocità", items: speedItems, keys: keys, onClose: closePanel)
         case .source:
-            TvListOverlay(title: "Fonte", subtitle: sourceNow, items: sourceItems, keys: keys, onClose: closePanel)
+            TvSourceOverlay(picker: model.sources, model: model, keys: keys, onPick: { row in closePanel(); model.pickSource(row, job: model.sources.job) }, onClose: closePanel)
         default:
             EmptyView()
         }

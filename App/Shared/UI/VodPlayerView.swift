@@ -42,6 +42,15 @@ struct VodPlayerView: View {
             #endif
         }
         .onAppear { chrome.show() }
+        // build pipeline: `-nxSourcePicker` opens "Cambia fonte" once the video plays (the Apple TV uses -nxPlayerPanel source)
+        .onChange(of: model.phase) { _, p in
+            #if os(iOS)
+            if p == .playing && Demo.args.contains("-nxSourcePicker") && !Demo.playerPanelDone {
+                Demo.playerPanelDone = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { source() }
+            }
+            #endif
+        }
         .onReceive(NotificationCenter.default.publisher(for: .nxRemoteKey)) { n in
             #if os(tvOS)
             // while the video plays TvVodLayer takes the keys; the other screens are two buttons at most
@@ -422,19 +431,11 @@ struct VodPlayerView: View {
         }
     }
 
+    /// "Cambia fonte": every source of the title, checked as the panel stays open (SourcePicker.swift).
     private func source() {
         guard let s = model.stream, s.channel != "offline" else { return }
-        if s.alternates.count > 1 {
-            var a = [NxAction]()
-            for (i, alt) in s.alternates.enumerated() {
-                let label = (alt.label ?? "").isBlank ? "Versione \(i + 1)" : (alt.label ?? "")
-                a.append(NxAction(label, selected: alt.url == s.url, badge: VodPlayerView.qualityOf(label)) { model.useAlternate(alt) })
-            }
-            a.append(NxAction("Cerca un'altra fonte", sub: "Adesso: \(s.channel) · \(s.server)", icon: "arrow.triangle.2.circlepath") { model.otherSource() })
-            app.menu("Fonte", a)
-        } else {
-            app.confirm("Cercare un'altra fonte?", message: "Adesso: \(s.channel) · \(s.server). La riproduzione riparte da dove sei.", confirm: "Cerca un'altra fonte") { model.otherSource() }
-        }
+        let m = model
+        app.present("Cambia fonte") { SourcePickerList(picker: m.sources, model: m) }
     }
 
     /// "1080p" in a version's name → FHD; 2160 → 4K, 720 → HD, 480 → SD.
