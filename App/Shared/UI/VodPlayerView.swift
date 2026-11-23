@@ -340,7 +340,7 @@ struct VodPlayerView: View {
                     #endif
                     Text("Prossimo episodio").font(NxFont.label).tracking(1).foregroundStyle(NxColor.textDim)
                     Text("S\(n.season) E\(n.episode)" + (n.episodeTitle.map { " · \($0)" } ?? "")).font(full ? NxFont.titleL : NxFont.titleM).foregroundStyle(NxColor.text).multilineTextAlignment(.center).lineLimit(2)
-                    if autoplay { Text("Parte tra \(countdown) secondi").font(NxFont.meta).foregroundStyle(NxColor.textMuted) }
+                    if autoplay { Text(countdown == 1 ? "Parte tra 1 secondo" : "Parte tra \(countdown) secondi").font(NxFont.meta).foregroundStyle(NxColor.textMuted) }
                     HStack(spacing: Metrics.u(10)) {
                         CountdownButton(title: "Guarda ora", icon: "play.fill", startedAt: autoplay ? endStart : nil, primary: true) { var x = n; x.auto = false; app.core.watchSession.touch(); app.play(x) }
                             .accessibilityIdentifier("player.ended.next")
