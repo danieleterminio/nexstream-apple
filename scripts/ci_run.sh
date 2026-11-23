@@ -29,7 +29,13 @@ run_one() { # label productdir device-regex
     fi
     xcrun simctl launch "$UDID" "$BUNDLE" "${ARGV[@]}" || echo "[$LABEL] launch failed"
     sleep "$SECS"
-    if [ -n "$VPID" ]; then kill -INT "$VPID" 2>/dev/null; wait "$VPID" 2>/dev/null; fi
+    if [ -n "$VPID" ]; then
+      # recordVideo finishes the file on SIGINT; never wait on it for more than 15 s
+      kill -INT "$VPID" 2>/dev/null
+      for _ in $(seq 1 30); do kill -0 "$VPID" 2>/dev/null || break; sleep 0.5; done
+      kill -9 "$VPID" 2>/dev/null || true
+      ls -la "$OUT/$LABEL-$NAME.mp4" 2>/dev/null || echo "[$LABEL] no video"
+    fi
     xcrun simctl io "$UDID" screenshot "$OUT/$LABEL-$NAME.png" > /dev/null 2>&1 || echo "[$LABEL] screenshot failed"
     if ! xcrun simctl spawn "$UDID" launchctl list 2>/dev/null | grep -q "$BUNDLE"; then
       echo "[$LABEL] app not running after shot $NAME"
