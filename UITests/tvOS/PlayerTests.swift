@@ -166,7 +166,11 @@ final class LivePlayerTests: NxUITestCase {
         return l
     }
 
-    /// UP / DOWN zap to the next / previous channel.
+    /// The id of the channel playing (the surface's accessibility value), or what the simulated swipe reported.
+    private var surfaceValue: String { (el("player.surface").value as? String) ?? "" }
+
+    /// UP / DOWN zap to the next / previous channel. `XCUIRemote.press(.up)` is a press of the arrow, like a physical
+    /// click on the top edge of the clickpad: the path that must zap.
     func testUpDownZap() {
         openLive()
         let first = channelFromPanel("start")
@@ -181,6 +185,39 @@ final class LivePlayerTests: NxUITestCase {
         assertAlive("DOWN zap")
         let third = channelFromPanel("after-down")
         XCTAssertEqual(first, third, "DOWN after UP should return to the first channel")
+    }
+
+    /// A click on the bottom edge zaps also while the info bar is up (shown by play/pause, focus still on the picture);
+    /// the options are reached with select or a swipe down, never with a click.
+    func testClickDownWithInfoBarZaps() {
+        openLive()
+        let before = surfaceValue
+        XCTAssertFalse(before.isEmpty, "the surface should report the channel playing")
+        press(.playPause, wait: 1.0)
+        snap("info-bar")
+        XCTAssertTrue(el("player.controls").exists, "play/pause should show the info bar")
+        press(.down, wait: 4.0)
+        snap("after-down")
+        assertAlive("DOWN click with the info bar")
+        XCTAssertNotEqual(before, surfaceValue, "a DOWN click with the info bar up should change channel")
+        XCTAssertEqual(focusedId, "player.surface", "the click should not move the focus into the options, \(focusInfo)")
+    }
+
+    /// A swipe up on the touch surface only shows the info bar, it never zaps. XCUIRemote cannot swipe: the build hook
+    /// `-nxPlayerPanel swipe` sends the player the same move command a swipe produces (no click before it) and reports
+    /// "swipe <before>-><after> info=<bar shown> zap=<banner shown>" in the surface's accessibility value.
+    func testSwipeOnlyShowsInfoBar() {
+        launch(["-nxLiveTest", NxUITestCase.testStream, "-nxPlayFirst", "-nxPlayerPanel", "swipe"], waitFor: "player.surface", timeout: 90, settle: 0)
+        let ran = wait(45) { self.surfaceValue.hasPrefix("swipe ") }
+        snap("after-swipe")
+        let v = surfaceValue
+        XCTAssertTrue(ran, "the simulated swipe did not run (surface value '\(v)')")
+        let ids = v.dropFirst(6).split(separator: " ").first.map { $0.components(separatedBy: "->") } ?? []
+        XCTAssertEqual(ids.count, 2, "unexpected report '\(v)'")
+        XCTAssertEqual(ids.first, ids.last, "a swipe changed the channel: '\(v)'")
+        XCTAssertTrue(v.contains("info=true"), "a swipe should show the info bar: '\(v)'")
+        XCTAssertTrue(v.contains("zap=false"), "a swipe should not show the zap banner: '\(v)'")
+        assertAlive("swipe")
     }
 
     /// LEFT opens Canali, BACK closes it, BACK (≤ 2) closes the player; the app stays.

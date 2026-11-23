@@ -1028,4 +1028,101 @@ struct TvTouchPan: UIViewRepresentable {
         }
     }
 }
+
+// MARK: - clicks and touches of the Siri Remote
+
+/// Tells a physical click on the edge of the Siri Remote's clickpad from a swipe or a resting finger. SwiftUI reports
+/// both as the same move command (`onMoveCommand`); UIKit does not: a click arrives as a press of the arrow type, a
+/// swipe only as touches that the focus engine turns into focus moves. The recognisers sit on the window, because the
+/// presses and touches of the remote go to the focused view and its ancestors; they never cancel anything, so the focus
+/// engine and the move commands keep working as usual. The live player uses it: click up / down = zap, swipe or touch =
+/// only the info bar.
+///
+/// `XCUIRemote.press(.up)` in the UI tests is a press, as a click is. There is no way to send a swipe or a touch from
+/// a UI test: that half can only be tried on a real remote.
+struct TvRemoteCatcher: UIViewRepresentable {
+    let enabled: Bool
+    /// A click on the top (+1) or bottom (-1) edge, at the moment it goes down.
+    let onClick: (Int) -> Void
+    /// A finger resting on (or moving over) the surface for a moment without a click.
+    let onTouch: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> HostView {
+        let v = HostView()
+        v.isUserInteractionEnabled = false
+        v.coordinator = context.coordinator
+        context.coordinator.parent = self
+        return v
+    }
+
+    func updateUIView(_ v: HostView, context: Context) { context.coordinator.parent = self }
+
+    static func dismantleUIView(_ v: HostView, coordinator: Coordinator) { coordinator.detach() }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var parent: TvRemoteCatcher?
+        /// When the last click went down (a touch right before or after it is part of the click, not a touch).
+        private(set) var lastClick = Date.distantPast
+
+        private func pressRecogniser(_ type: UIPress.PressType, _ action: Selector) -> UILongPressGestureRecognizer {
+            let g = UILongPressGestureRecognizer(target: self, action: action)
+            g.minimumPressDuration = 0
+            g.allowedPressTypes = [NSNumber(value: type.rawValue)]
+            g.allowedTouchTypes = []
+            g.cancelsTouchesInView = false
+            g.delaysTouchesBegan = false
+            g.delaysTouchesEnded = false
+            g.delegate = self
+            return g
+        }
+        lazy var up: UILongPressGestureRecognizer = self.pressRecogniser(.upArrow, #selector(Coordinator.clickUp(_:)))
+        lazy var down: UILongPressGestureRecognizer = self.pressRecogniser(.downArrow, #selector(Coordinator.clickDown(_:)))
+        lazy var touch: UILongPressGestureRecognizer = {
+            let g = UILongPressGestureRecognizer(target: self, action: #selector(Coordinator.touched(_:)))
+            g.minimumPressDuration = 0.25
+            g.allowableMovement = .greatestFiniteMagnitude
+            g.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirect.rawValue)]
+            g.allowedPressTypes = []
+            g.cancelsTouchesInView = false
+            g.delaysTouchesBegan = false
+            g.delaysTouchesEnded = false
+            g.delegate = self
+            return g
+        }()
+        var all: [UIGestureRecognizer] { [up, down, touch] }
+
+        func attach(_ w: UIWindow) {
+            detach()
+            all.forEach { w.addGestureRecognizer($0) }
+        }
+        func detach() { all.forEach { $0.view?.removeGestureRecognizer($0) } }
+
+        @objc func clickUp(_ g: UILongPressGestureRecognizer) { click(g, 1) }
+        @objc func clickDown(_ g: UILongPressGestureRecognizer) { click(g, -1) }
+        private func click(_ g: UILongPressGestureRecognizer, _ d: Int) {
+            guard g.state == .began else { return }
+            lastClick = Date()
+            guard let p = parent, p.enabled else { return }
+            p.onClick(d)
+        }
+
+        @objc func touched(_ g: UILongPressGestureRecognizer) {
+            guard g.state == .began, Date().timeIntervalSince(lastClick) > 0.6, let p = parent, p.enabled else { return }
+            p.onTouch()
+        }
+
+        func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+    }
+
+    final class HostView: UIView {
+        weak var coordinator: Coordinator?
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            guard let c = coordinator else { return }
+            if let w = window { c.attach(w) } else { c.detach() }
+        }
+    }
+}
 #endif
