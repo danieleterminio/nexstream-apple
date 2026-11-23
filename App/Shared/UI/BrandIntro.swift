@@ -8,7 +8,7 @@ import SwiftUI
 ///  - 4.75 s: the whole thing fades (0.4 s) into what the app has ready behind it (VPN gate, profiles, Home).
 /// At every cold start, never skippable: RootView disables the pages under it, it swallows taps, and on the Apple TV it
 /// holds the focus and eats BACK / play / moves. The app keeps starting underneath (AppModel is already working), so
-/// nothing waits for the animation. Reduce Motion: plain fades, same duration.
+/// nothing waits for the animation. Reduce Motion: plain fades, same duration. A stalled start pauses it (never skips).
 enum NxIntro {
     static let quote = "If buying isn't owning, piracy isn't stealing."
     static let end: Double = 5.15
@@ -43,16 +43,15 @@ private func mix(_ a: Double, _ b: Double, _ p: Double) -> Double { a + (b - a) 
 struct BrandIntro: View {
     let onDone: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduce
-    @State private var start = Date()
-    @State private var done = false
+    /// Seconds of the opening shown so far: frame-paced, a tick moves it by at most 50 ms, so a stall of the main
+    /// thread while the app starts underneath pauses the opening instead of skipping the quote.
+    @State private var t: Double = 0
     #if os(tvOS)
     @FocusState private var focused: Bool
     #endif
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: nil, paused: done)) { ctx in
-            frame(max(0, ctx.date.timeIntervalSince(start)))
-        }
+        frame(t)
         .ignoresSafeArea()
         .contentShape(Rectangle())
         .onTapGesture {}
@@ -69,16 +68,22 @@ struct BrandIntro: View {
         #endif
         .onAppear {
             NxIntro.running = true
-            start = Date()
             NxLog.i("NxIntro", "opening starts (reduce motion: \(reduce))")
             #if os(tvOS)
             focused = true
             #endif
         }
         .task {
-            try? await Task.sleep(nanoseconds: UInt64(NxIntro.end * 1_000_000_000))
+            let start = Date()
+            var last = start
+            while t < NxIntro.end {
+                try? await Task.sleep(nanoseconds: 16_000_000)
+                if Task.isCancelled { NxIntro.running = false; return }
+                let now = Date()
+                t += min(max(0, now.timeIntervalSince(last)), 0.05)
+                last = now
+            }
             NxIntro.running = false
-            done = true
             NxLog.i("NxIntro", String(format: "opening done after %.2f s", Date().timeIntervalSince(start)))
             onDone()
         }
